@@ -1,0 +1,18 @@
+[package]
+name = "hia-hugerte-tauri"
+version = "0.1.0"
+description = "A portable Windows HTML editor built with HugeRTE and Tauri"
+authors = ["HIA HugeRTE Tauri contributors"]
+edition = "2021"
+
+[lib]
+name = "hia_hugerte_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+tauri = { version = "2.11.1", features = [] }
+tauri-plugin-dialog = "2.7.2"

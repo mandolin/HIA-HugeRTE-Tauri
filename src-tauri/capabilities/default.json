@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "默认桌面窗口仅允许必要的核心能力和原生对话框。",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}

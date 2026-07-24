@@ -1,0 +1,17 @@
+# Dependencies and generated application artifacts
+node_modules/
+dist/
+coverage/
+target/
+src-tauri/target/
+
+# Rebuildable release and temporary artifacts
+output/
+temp/
+*.log
+
+# Private, separately versioned planning and evidence repository
+work-zone/
+
+# Local editor preferences; keep the existing local settings out of distributable sources.
+.vscode/settings.json

@@ -1,0 +1,16 @@
+{
+  "folders": [
+    {
+      "path": ".",
+      "name": "HIA HugeRTE Tauri"
+    },
+    {
+      "path": "work-zone",
+      "name": "HIA HugeRTE Tauri WorkZone"
+    }
+  ],
+  "settings": {
+    "git.detectSubmodules": true,
+    "git.detectSubmodulesLimit": 10
+  }
+}

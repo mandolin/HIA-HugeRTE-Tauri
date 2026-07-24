@@ -1,0 +1,27 @@
+{
+  "name": "hia-hugerte-tauri",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run build && npm test && cargo check --manifest-path src-tauri/Cargo.toml && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build --no-bundle",
+    "portable:zip": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "hugerte": "1.0.12"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}
