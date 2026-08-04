@@ -13,11 +13,11 @@ $archivePath = Join-Path $outputRoot "$productDirectoryName.zip"
 $executablePath = Join-Path $projectRoot 'src-tauri\target\release\hia-hugerte-tauri.exe'
 
 if (Test-Path -LiteralPath $stagingDirectory) {
-    throw "便携版暂存目录已存在，请先人工检查并移除：$stagingDirectory"
+    Remove-Item -LiteralPath $stagingDirectory -Recurse -Force
 }
 
 if (Test-Path -LiteralPath $archivePath) {
-    throw "便携版 ZIP 已存在，请先人工检查并移除：$archivePath"
+    Remove-Item -LiteralPath $archivePath -Force
 }
 
 Push-Location $projectRoot

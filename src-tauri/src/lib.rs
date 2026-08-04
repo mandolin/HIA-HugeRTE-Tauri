@@ -14,6 +14,8 @@ use tauri_plugin_dialog::DialogExt;
 struct DocumentPayload {
     path: String,
     content: String,
+    /// 文档所在目录；仅用于在前端把相对资源引用安全映射为可显示的内联数据，绝不写回磁盘。
+    base_dir: String,
 }
 
 struct DocumentState {
@@ -42,9 +44,15 @@ fn read_html_document(path: &Path, state: &DocumentState) -> Result<DocumentPayl
         .map_err(|_| "[file.state_failed] 文档权限状态不可用。".to_string())?
         .insert(canonical_path.clone());
 
+    let base_dir = canonical_path
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
     Ok(DocumentPayload {
         path: canonical_path.to_string_lossy().into_owned(),
         content,
+        base_dir,
     })
 }
 
@@ -176,6 +184,69 @@ fn ensure_html_extension(path: &Path) -> PathBuf {
     }
 }
 
+/// 中文：把被打开文档内的相对资源引用安全解析为内联 data URI，仅供前端显示，绝不写回磁盘。
+/// 仅接受落在 `base_dir` 之内（含子目录）的相对图片路径；任何越界或读取失败都返回 `None`，
+/// 由前端保留原引用而不致崩溃。
+#[tauri::command]
+fn resolve_document_asset(base_dir: String, relative_path: String) -> Option<String> {
+    let base = Path::new(&base_dir).canonicalize().ok()?;
+    // 中文：允许相对路径引用到文档目录的同级资源（如 ../assets），
+    // 但禁止跳出文档目录的父目录（如 ../../etc/passwd）。
+    let scope = base.parent().map(Path::to_path_buf).unwrap_or(base.clone());
+    let joined = base.join(&relative_path);
+    let canonical = joined.canonicalize().ok()?;
+    let scope_with_sep = scope.join("");
+    if canonical != scope && !canonical.starts_with(&scope_with_sep) {
+        return None;
+    }
+    let bytes = fs::read(&canonical).ok()?;
+    let mime = mime_for_path(&canonical);
+    Some(format!("data:{mime};base64,{}", encode_base64(&bytes)))
+}
+
+/// 中文：根据扩展名推断常见图片 MIME；未知类型回退为 application/octet-stream。
+fn mime_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+    {
+        Some(ref extension) if extension == "png" => "image/png",
+        Some(ref extension) if extension == "jpg" || extension == "jpeg" => "image/jpeg",
+        Some(ref extension) if extension == "gif" => "image/gif",
+        Some(ref extension) if extension == "webp" => "image/webp",
+        Some(ref extension) if extension == "svg" => "image/svg+xml",
+        Some(ref extension) if extension == "bmp" => "image/bmp",
+        Some(ref extension) if extension == "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 中文：标准 Base64 编码，避免为单一用途引入额外依赖。
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        output.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        output.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((triple >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(triple & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
+}
+
 pub fn run() {
     let startup_paths = std::env::args_os()
         .skip(1)
@@ -194,7 +265,8 @@ pub fn run() {
             open_document_path,
             open_document_dialog,
             save_document,
-            save_document_as
+            save_document_as,
+            resolve_document_asset
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");
@@ -282,6 +354,84 @@ mod tests {
         );
 
         fs::remove_file(&document_path).expect("应能清理测试文档");
+        fs::remove_dir(&directory).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn 资源解析返回内联_data_uri() {
+        let directory = create_test_directory();
+        let asset_path = directory.join("logo.png");
+        fs::write(&asset_path, [0x89, 0x50, 0x4e, 0x47]).expect("应能写入测试图片");
+        let result = resolve_document_asset(
+            directory.to_string_lossy().into_owned(),
+            "logo.png".to_string(),
+        );
+        assert!(result.is_some());
+        let uri = result.unwrap();
+        assert!(uri.starts_with("data:image/png;base64,"));
+        assert_eq!(uri, "data:image/png;base64,iVBORw==");
+
+        fs::remove_file(&asset_path).expect("应能清理测试图片");
+        fs::remove_dir(&directory).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn 资源解析允许文档目录的同级资源() {
+        let directory = create_test_directory();
+        let sibling_assets = directory
+            .parent()
+            .expect("临时目录应有父目录")
+            .join("assets");
+        fs::create_dir(&sibling_assets).expect("应能创建同级 assets 目录");
+        let asset_path = sibling_assets.join("sibling.png");
+        fs::write(&asset_path, [0x89, 0x50, 0x4e, 0x47]).expect("应能写入测试图片");
+
+        let result = resolve_document_asset(
+            directory.to_string_lossy().into_owned(),
+            "../assets/sibling.png".to_string(),
+        );
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with("data:image/png;base64,"));
+
+        fs::remove_file(&asset_path).expect("应能清理测试图片");
+        fs::remove_dir(&sibling_assets).expect("应能清理同级 assets 目录");
+        fs::remove_dir(&directory).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn 资源解析拒绝跳出文档目录父目录() {
+        let directory = create_test_directory();
+        let outside_scope = directory
+            .parent()
+            .expect("临时目录应有父目录")
+            .parent()
+            .expect("临时目录父目录应有父目录")
+            .join("hia-hugerte-tauri-outside");
+        fs::create_dir(&outside_scope).ok();
+        let asset_path = outside_scope.join("outside.png");
+        fs::write(&asset_path, [0x89, 0x50, 0x4e, 0x47]).expect("应能写入测试图片");
+
+        let relative = format!(
+            "../../{}/outside.png",
+            outside_scope.file_name().unwrap().to_string_lossy()
+        );
+        let result = resolve_document_asset(directory.to_string_lossy().into_owned(), relative);
+        assert!(result.is_none());
+
+        fs::remove_file(&asset_path).expect("应能清理测试图片");
+        fs::remove_dir(&outside_scope).expect("应能清理 scope 外目录");
+        fs::remove_dir(&directory).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn 资源解析拒绝缺失文件() {
+        let directory = create_test_directory();
+        let result = resolve_document_asset(
+            directory.to_string_lossy().into_owned(),
+            "missing.png".to_string(),
+        );
+        assert!(result.is_none());
+
         fs::remove_dir(&directory).expect("应能清理临时测试目录");
     }
 }

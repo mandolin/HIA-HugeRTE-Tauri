@@ -4,11 +4,15 @@ export interface DocumentState {
   content: string;
   path: string | null;
   dirty: boolean;
+  /** 文档所在目录；仅用于把相对资源引用安全映射为可显示的内联数据，绝不写回磁盘。 */
+  baseDir: string | null;
 }
 
 export interface DocumentPayload {
   content: string;
   path: string;
+  /** 文档所在目录，由原生层提供。 */
+  baseDir: string;
 }
 
 /** 创建一个尚未保存的 HTML 文档状态。 */
@@ -16,13 +20,14 @@ export function createNewDocument(): DocumentState {
   return {
     content: "<!doctype html>\n<html>\n<head>\n  <meta charset=`utf-8` />\n  <title>未命名文档</title>\n</head>\n<body>\n  <p></p>\n</body>\n</html>\n",
     path: null,
-    dirty: false
+    dirty: false,
+    baseDir: null
   };
 }
 
 /** 将已读取的本地文档转换为干净的编辑状态。 */
 export function documentFromPayload(payload: DocumentPayload): DocumentState {
-  return { content: payload.content, path: payload.path, dirty: false };
+  return { content: payload.content, path: payload.path, dirty: false, baseDir: payload.baseDir };
 }
 
 /** 只接受本应用第一期明确支持的 HTML 文件扩展名。 */

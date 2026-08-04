@@ -73,8 +73,72 @@ function refreshDocumentHeader(): void {
 }
 
 function readEditorContent(): string {
+  restoreOriginalAssets();
   editor?.save();
   return editor?.getContent() ?? editorTarget.value;
+}
+
+const ASSET_URL_SCHEME = /^(https?:|data:|asset:|blob:)/i;
+
+/**
+ * 中文：把 HTML 字符串中的相对资源引用在内存中映射为可显示的 data URI，便于
+ * Tauri 的 `tauri://localhost` WebView 显示本地图片；绝不改写磁盘上的源文件。
+ * 每个被改写的图片用 `data-original-src` 记录原始相对路径，供保存时还原。
+ */
+async function rewriteRelativeAssetsInHtml(html: string, baseDir: string | null): Promise<string> {
+  if (!baseDir) return html;
+  const parser = new DOMParser();
+  const document = parser.parseFromString(html, "text/html");
+  const images = Array.from(document.querySelectorAll<HTMLImageElement>("img[src]"));
+  await Promise.all(
+    images.map(async (image) => {
+      if (image.hasAttribute("data-original-src")) return;
+      const src = image.getAttribute("src") ?? "";
+      let isRelative = false;
+      try {
+        new URL(src);
+      } catch {
+        isRelative = true;
+      }
+      if (!isRelative || src.startsWith("/") || ASSET_URL_SCHEME.test(src)) return;
+      try {
+        const dataUri = await invoke<string | null>("resolve_document_asset", { baseDir, relativePath: src });
+        if (dataUri) {
+          image.setAttribute("data-original-src", src);
+          image.setAttribute("src", dataUri);
+        }
+      } catch {
+        // 解析失败时保留原引用，不阻断编辑与显示。
+      }
+    })
+  );
+  return document.documentElement?.outerHTML ?? html;
+}
+
+/** 中文：保存前把内存中改写的显示 URL 还原为原始相对路径，确保磁盘文件不被改动。 */
+function restoreOriginalAssets(): void {
+  if (!editor) return;
+  const images = Array.from(editor.getBody().querySelectorAll<HTMLImageElement>("img[data-original-src]"));
+  for (const image of images) {
+    const original = image.getAttribute("data-original-src");
+    if (original) image.setAttribute("src", original);
+    image.removeAttribute("data-original-src");
+  }
+}
+
+/**
+ * 中文：将文档状态应用到编辑器。注入前先把相对资源引用在内存中改写为 data URI，
+ * 使 WebView 能显示被打开 HTML 文件所在目录的本地图片。
+ */
+async function applyDocumentToEditor(documentState: DocumentState): Promise<void> {
+  if (!editor) {
+    editorTarget.value = documentState.content;
+    return;
+  }
+  const displayContent = await rewriteRelativeAssetsInHtml(documentState.content, documentState.baseDir);
+  editor.setContent(displayContent);
+  editor.undoManager.clear();
+  editor.setDirty(false);
 }
 
 function applyEditorFontSize(): void {
@@ -113,14 +177,14 @@ async function initializeEditor(): Promise<void> {
   });
   editor = instances[0] ?? null;
   if (!editor) throw new Error("HugeRTE 未能创建编辑器实例。");
-  replaceDocument(createNewDocument());
+  await replaceDocument(createNewDocument());
   applyEditorFontSize();
 }
 
-function replaceDocument(nextState: DocumentState): void {
+async function replaceDocument(nextState: DocumentState): Promise<void> {
   isReplacingContent = true;
   state = nextState;
-  if (editor) { editor.setContent(nextState.content); editor.undoManager.clear(); editor.setDirty(false); } else editorTarget.value = nextState.content;
+  await applyDocumentToEditor(nextState);
   isReplacingContent = false;
   refreshDocumentHeader();
 }
@@ -131,7 +195,7 @@ async function confirmDiscardChanges(): Promise<boolean> {
 
 async function openPayload(payload: DocumentPayload): Promise<void> {
   if (!(await confirmDiscardChanges())) return;
-  replaceDocument(documentFromPayload(payload));
+  await replaceDocument(documentFromPayload(payload));
   applyEditorFontSize();
   setStatus("已打开");
 }
@@ -150,23 +214,24 @@ async function openFromPath(path: string): Promise<void> {
 
 async function createDocument(): Promise<void> {
   if (!(await confirmDiscardChanges())) return;
-  replaceDocument(createNewDocument());
+  await replaceDocument(createNewDocument());
   applyEditorFontSize();
   setStatus("已新建文档");
 }
 
 async function saveDocument(forceSaveAs: boolean): Promise<void> {
   try {
+    restoreOriginalAssets();
     const content = readEditorContent();
     if (forceSaveAs || !state.path) {
       const result = await invoke<SaveResult | null>("save_document_as", { content, suggestedName: ensureHtmlExtension(getDocumentLabel(state.path)) });
       if (!result) return;
-      state = { content, path: result.path, dirty: false };
+      state = { content, path: result.path, dirty: false, baseDir: state.baseDir };
     } else {
       await invoke("save_document", { path: state.path, content });
       state = { ...state, content, dirty: false };
     }
-    editor?.setDirty(false);
+    await applyDocumentToEditor(state);
     refreshDocumentHeader();
     setStatus("已保存");
   } catch (error) { setStatus(`保存失败：${formatError(error)}`); }

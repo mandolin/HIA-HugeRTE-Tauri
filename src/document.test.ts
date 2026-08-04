@@ -21,8 +21,8 @@ describe("文档状态", () => {
   });
 
   it("从载荷恢复干净文档并显示文件名", () => {
-    const document = documentFromPayload({ path: "K:\\docs\\sample.html", content: "<p>内容</p>" });
-    expect(document).toEqual({ path: "K:\\docs\\sample.html", content: "<p>内容</p>", dirty: false });
+    const document = documentFromPayload({ path: "K:\\docs\\sample.html", content: "<p>内容</p>", baseDir: "K:\\docs" });
+    expect(document).toEqual({ path: "K:\\docs\\sample.html", content: "<p>内容</p>", dirty: false, baseDir: "K:\\docs" });
     expect(getDocumentLabel(document.path)).toBe("sample.html");
   });
 });
