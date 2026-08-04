@@ -9,6 +9,7 @@ src-tauri/target/
 output/
 temp/
 *.log
+.playwright-cli/
 
 # Private, separately versioned planning and evidence repository
 work-zone/
