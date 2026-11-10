@@ -33,7 +33,7 @@ The ZIP is written under `output/` and is intentionally not versioned. Its inclu
 
 ## Contributing
 
-Please read [AGENTS.md](AGENTS.md) before making changes. Do not add application dependencies, distributable fonts, icons or code copied from reference projects without recording their source and license.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before making changes. Do not add application dependencies, distributable fonts, icons or code copied from reference projects without recording their source and license. Version and release rules are documented in [docs/versioning.md](docs/versioning.md).
 
 ## License
 
