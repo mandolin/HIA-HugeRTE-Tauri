@@ -45,6 +45,13 @@ button, select { font: inherit; }
 .tree__row--asset { color: #425466; cursor: pointer; }
 .tree__row--asset:hover { background: #eef3f5; }
 .tree__row--active { background: #e1fdf9; color: #034661; font-weight: 600; }
+/* 中文：树内单击选中态（维护者定案：单击高亮、双击打开）——与"当前文档"高亮（--active）区分，
+   用描边+浅底，两者可叠加。 */
+/* English: In-tree click-selected state (maintainer decision: click highlights, double-click
+   opens) — distinct from the current-document highlight (--active); outline + light fill, and
+   the two can stack. */
+.tree__row--selected { background: #eef3f5; box-shadow: inset 2px 0 0 #034661; }
+.tree__row--selected.tree__row--active { background: #e1fdf9; }
 .tree__row:focus-visible { outline: 2px solid #034661; outline-offset: -2px; }
 .tree__indent-1 { margin-left: 1rem; } .tree__indent-2 { margin-left: 1.8rem; } .tree__indent-3 { margin-left: 2.6rem; }
 .tree__caret { width: 1.15rem; flex: none; border: none; background: transparent; color: #7d939f; font-size: .72rem; cursor: pointer; padding: 0; }

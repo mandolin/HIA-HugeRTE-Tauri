@@ -311,6 +311,7 @@ async function replaceDocument(nextState: DocumentState): Promise<void> {
   refreshDocumentHeader();
   expandedDirs.clear();
   expandedDirs.add(".");
+  selectedTreePath = null;
   await renderExplorerTree();
 }
 
@@ -339,6 +340,7 @@ async function switchToTab(index: number): Promise<void> {
   applyEditorFontSize();
   expandedDirs.clear();
   expandedDirs.add(".");
+  selectedTreePath = null;
   await renderExplorerTree();
   setStatus("已切换标签页");
 }
@@ -681,14 +683,21 @@ async function appendTreeChildren(container: HTMLElement, baseDir: string, relat
 
 /**
  * @lang zh-CN
- * 构造单行：目录行带真实展开/收缩按钮（toggleExpandDir，键盘可达）；资源行可点击预览。
+ * 构造单行（交互语义，维护者 2026-11-10 定案）：**单击 = 高亮选中**（tree__row--selected，
+ * 目录与文件皆可；文件同时弹资源预览），**双击 = 直接打开**该文件为新 Tab（openFromPath，
+ * 含脏确认与历史记录）；键盘 Enter = 选中态下的"打开"（无障碍等价双击）。
+ * 目录行行首仍有真实展开/收缩按钮（不与选中冲突）。
  * @lang en
- * Build one row: directory rows carry a real expand/collapse button (toggleExpandDir,
- * keyboard-reachable); asset rows are clickable for preview.
+ * Build one row (interaction semantics, maintainer 2026-11-10): **single click = select/highlight**
+ * (tree__row--selected, both dirs and files; files also show the asset preview), **double click =
+ * open the file in a new tab** (openFromPath, which runs the dirty confirm and records history);
+ * keyboard Enter opens the selected row (accessible double-click equivalent). Directory rows keep
+ * their real expand/collapse button, independent of selection.
  */
 function buildTreeRow(entry: TreeEntryPayload, relativePath: string, expanded: boolean): HTMLDivElement {
   const row = document.createElement("div");
   row.className = `tree__row${entry.isSupportedAsset ? " tree__row--asset" : ""}`;
+  if (selectedTreePath === relativePath) row.classList.add("tree__row--selected");
   row.setAttribute("role", "treeitem");
   row.tabIndex = 0;
   if (entry.isDir) {
@@ -711,11 +720,88 @@ function buildTreeRow(entry: TreeEntryPayload, relativePath: string, expanded: b
   const name = document.createElement("span");
   name.textContent = entry.name;
   row.appendChild(name);
-  if (entry.isSupportedAsset) {
-    row.addEventListener("click", () => void showAssetPreview(relativePath));
-    row.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void showAssetPreview(relativePath); } });
-  }
+  // 中文：单击选中（重绘使高亮稳定持久，不靠 :hover）；双击打开——click 与 dblclick 并存时
+  //       单击会先触发一次，属预期行为（先高亮再打开）。
+  // English: Single click selects (re-render keeps the highlight stable, not :hover-dependent);
+  //       double click opens — with both handlers the first click of a double click fires once,
+  //       which is the expected select-then-open flow.
+  row.addEventListener("click", () => {
+    selectedTreePath = relativePath;
+    if (entry.isSupportedAsset) void showAssetPreview(relativePath);
+    else explorerPreview.hidden = true;
+    renderTreeSelection();
+  });
+  row.addEventListener("dblclick", () => {
+    if (entry.isDir) { void toggleExpandDir(relativePath); return; }
+    const baseDir = state().baseDir;
+    if (!baseDir) return;
+    const absolute = resolveTreeAbsolutePath(baseDir, relativePath);
+    if (absolute) void openFromPath(absolute);
+  });
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      selectedTreePath = relativePath;
+      renderTreeSelection();
+      if (!entry.isDir) {
+        const baseDir = state().baseDir;
+        const absolute = baseDir ? resolveTreeAbsolutePath(baseDir, relativePath) : null;
+        if (absolute) void openFromPath(absolute);
+      }
+    }
+  });
   return row;
+}
+
+/** @lang zh-CN 树内当前选中项的相对路径（会话内状态；文档切换时清空）。 / @lang en Relative path of the selected tree entry (session state; cleared when the document changes). */
+let selectedTreePath: string | null = null;
+
+/**
+ * @lang zh-CN
+ * 只更新选中高亮（不整树重绘，避免双击时因重绘吞掉第二次 click 的体验波动）：
+ * 清除旧选中行、点亮新选中行。
+ * @lang en
+ * Update only the selection highlight (no full re-render, so the second click of a double click
+ * is not swallowed by a repaint): clear the previous selected row and light the new one.
+ */
+function renderTreeSelection(): void {
+  const rows = explorerTree.querySelectorAll(".tree__row--selected");
+  rows.forEach((row) => row.classList.remove("tree__row--selected"));
+  if (selectedTreePath === null) return;
+  // 中文：行的相对路径不写进 DOM 属性，按行内文件名文本匹配即可（同层同名不出现——文件系统保证）。
+  // English: Row relative paths are not stored in DOM attributes; matching by the row's file-name
+  //       text suffices (same-level duplicates are impossible on a filesystem).
+  const lastName = selectedTreePath.split("/").pop();
+  for (const row of Array.from(explorerTree.querySelectorAll(".tree__row"))) {
+    const nameSpan = row.querySelector("span:last-child");
+    if (nameSpan?.textContent === lastName) { row.classList.add("tree__row--selected"); break; }
+  }
+}
+
+/**
+ * @lang zh-CN
+ * 把树内相对路径解析为绝对路径（树的相对基准 = 文档目录，与资源解析不同——资源允许
+ * ../，树的根就是文档目录，双击打开需要完整路径供 open_document_path 校验）。
+ * @lang en
+ * Resolve a tree-relative path to an absolute one (the tree's base is the document directory,
+ * unlike asset resolution which allows ../; opening needs the full path for open_document_path
+ * validation).
+ */
+function resolveTreeAbsolutePath(baseDir: string, relativePath: string): string | null {
+  if (relativePath === ".") return null;
+  const normalized = baseDir.replace(/[\\/]+$/, "");
+  const parts = relativePath.split("/");
+  let current = normalized;
+  for (const part of parts) {
+    if (part === "..") {
+      const parent = current.replace(/[\\/][^\\/]+$/, "");
+      if (parent === current) return null;
+      current = parent;
+    } else if (part !== ".") {
+      current = `${current}\\${part}`;
+    }
+  }
+  return current;
 }
 
 /**
