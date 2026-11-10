@@ -16,7 +16,7 @@ import "hugerte/plugins/table";
 import "hugerte/themes/silver";
 import "hugerte/skins/content/default/content";
 import "hugerte/skins/ui/oxide/skin";
-import { createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, type DocumentPayload, type DocumentState } from "./document";
+import { buildDiscardConfirmMessage, createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, type DocumentPayload, type DocumentState } from "./document";
 import {
   buildDefaultCharacterMap,
   HUGERTE_COMPATIBILITY_CONTENT_STYLE,
@@ -44,6 +44,16 @@ app.innerHTML = `
     </header>
     <section class="editor-options" aria-label="编辑器设置"><label>编辑字号 <select id="editor-font-size"><option value="14px">14</option><option value="16px" selected>16</option><option value="18px">18</option><option value="20px">20</option></select></label><span id="document-status" role="status">准备就绪</span></section>
     <section class="editor-container"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea><div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div></section>
+    <div id="confirm-scrim" class="confirm-scrim" role="presentation">
+      <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+        <h2 id="confirm-title">放弃未保存的修改？</h2>
+        <p id="confirm-message"></p>
+        <div class="confirm-actions">
+          <button id="confirm-cancel" type="button" class="btn-ghost">取消</button>
+          <button id="confirm-discard" type="button" class="btn-danger">放弃修改并继续</button>
+        </div>
+      </div>
+    </div>
   </main>
 `;
 
@@ -52,6 +62,10 @@ const documentStatus = requiredElement<HTMLSpanElement>("#document-status");
 const editorTarget = requiredElement<HTMLTextAreaElement>("#hugerte-editor");
 const dropIndicator = requiredElement<HTMLDivElement>("#drop-indicator");
 const fontSize = requiredElement<HTMLSelectElement>("#editor-font-size");
+const confirmScrim = requiredElement<HTMLDivElement>("#confirm-scrim");
+const confirmMessage = requiredElement<HTMLParagraphElement>("#confirm-message");
+const confirmCancelButton = requiredElement<HTMLButtonElement>("#confirm-cancel");
+const confirmDiscardButton = requiredElement<HTMLButtonElement>("#confirm-discard");
 let editor: Editor | null = null;
 let state = createNewDocument();
 let isReplacingContent = false;
@@ -189,8 +203,50 @@ async function replaceDocument(nextState: DocumentState): Promise<void> {
   refreshDocumentHeader();
 }
 
-async function confirmDiscardChanges(): Promise<boolean> {
-  return !state.dirty || window.confirm("当前文档尚未保存。是否放弃这些修改？");
+/**
+ * @lang zh-CN
+ * 显示「放弃未保存修改」的确认模态并等待用户选择。实现 DEF-1 方案 B：替代发行构建中
+ * 不可用的 `window.confirm`。键盘语义：Esc/取消按钮 = 保留文档（返回 false，安全默认）；
+ * 「放弃修改并继续」= 返回 true。模态打开时默认焦点落在「取消」，使误触回车不会丢数据；
+ * 关闭后焦点回落到触发按钮以保持键盘连续性。
+ * @lang en
+ * Show the discard-changes confirmation modal and await the user's choice. Implements DEF-1
+ * option B: replaces `window.confirm`, which is unavailable in release builds. Keyboard
+ * semantics: Esc or the Cancel button keeps the document (returns false, the safe default);
+ * "Discard and continue" returns true. Default focus sits on Cancel while the modal is open so
+ * an accidental Enter cannot lose data; focus returns to the invoking button on close to keep
+ * keyboard flow continuous.
+ */
+function confirmDiscardChanges(): Promise<boolean> {
+  if (!state.dirty) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    let decided = false;
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const finish = (discarded: boolean) => {
+      // 中文：幂等收口——按钮点击、Esc 与收尾清理可能交错，只有第一次决定生效。
+      // English: Idempotent teardown — button clicks, Esc and cleanup may interleave; only the
+      // first decision takes effect.
+      if (decided) return;
+      decided = true;
+      confirmScrim.classList.remove("confirm-scrim--active");
+      window.removeEventListener("keydown", onKeyDown, true);
+      previousActive?.focus();
+      resolve(discarded);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(false);
+      }
+    };
+    confirmMessage.textContent = buildDiscardConfirmMessage(state.path);
+    confirmScrim.classList.add("confirm-scrim--active");
+    window.addEventListener("keydown", onKeyDown, true);
+    confirmCancelButton.focus();
+    confirmCancelButton.addEventListener("click", () => finish(false), { once: true });
+    confirmDiscardButton.addEventListener("click", () => finish(true), { once: true });
+  });
 }
 
 async function openPayload(payload: DocumentPayload): Promise<void> {

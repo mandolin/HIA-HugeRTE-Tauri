@@ -20,3 +20,20 @@ button, select { font: inherit; }
 .editor-container > .tox { height: 100% !important; border: 1px solid #b8c7ce; border-radius: .45rem; }
 .drop-indicator { position: absolute; z-index: 10; display: none; place-items: center; inset: .75rem; border: 3px dashed #034661; border-radius: .45rem; color: #034661; font-size: 1.2rem; font-weight: 700; pointer-events: none; background: rgb(225 253 249 / 90%); }
 .drop-indicator--active { display: grid; }
+
+/* 中文：放弃修改确认模态（原型 v1，work-zone/dev/research/prototypes/hrt-confirm-modal-2026-11-10）。
+   遮罩覆盖整个应用外壳，卡片居中；默认焦点在「取消」，确认按钮用警示色并带可见焦点环。 */
+/* English: Discard-changes confirm modal (prototype v1, work-zone/dev/research/prototypes/
+   hrt-confirm-modal-2026-11-10). The scrim covers the whole shell with a centered card; default
+   focus sits on Cancel and the confirm button uses a warning color with a visible focus ring. */
+.confirm-scrim { position: fixed; z-index: 40; display: none; place-items: center; inset: 0; background: rgb(21 32 43 / 45%); }
+.confirm-scrim--active { display: grid; }
+.confirm-card { width: 26rem; max-width: calc(100vw - 3rem); border: 1px solid #b8c7ce; border-radius: .5rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 28%); padding: 1.1rem 1.2rem 1rem; display: grid; gap: .8rem; }
+.confirm-card h2 { margin: 0; font-size: 1rem; color: #15202b; }
+.confirm-card p { margin: 0; color: #425466; font-size: .88rem; line-height: 1.55; }
+.confirm-card p code { background: #eef3f5; border-radius: .25rem; padding: 0 .3rem; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.confirm-actions button { font: inherit; padding: .42rem .9rem; border-radius: .3rem; cursor: pointer; }
+.confirm-actions .btn-ghost { border: 1px solid #a8b8c0; background: #fff; color: #15202b; }
+.confirm-actions .btn-danger { border: 1px solid #8f2f43; background: #b23a54; color: #fff; font-weight: 600; }
+.confirm-actions .btn-danger:focus-visible, .confirm-actions .btn-ghost:focus-visible { outline: 2px solid #034661; outline-offset: 2px; }
