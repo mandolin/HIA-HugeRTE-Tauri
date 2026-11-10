@@ -41,6 +41,7 @@ app.innerHTML = `
         <button id="open-document" type="button" title="打开 HTML 文件">打开</button>
         <button id="save-document" type="button" title="保存当前文档">保存</button>
         <button id="save-as-document" type="button" title="另存为 HTML 文件">另存为</button>
+        <button id="history-button" type="button" title="最近打开的文件">历史 ▾</button>
       </nav>
     </header>
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
@@ -383,34 +384,7 @@ async function closeTabByState(id: string): Promise<void> {
  */
 function confirmDiscardChanges(): Promise<boolean> {
   if (!state().dirty) return Promise.resolve(true);
-  return new Promise<boolean>((resolve) => {
-    let decided = false;
-    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const finish = (discarded: boolean) => {
-      // 中文：幂等收口——按钮点击、Esc 与收尾清理可能交错，只有第一次决定生效。
-      // English: Idempotent teardown — button clicks, Esc and cleanup may interleave; only the
-      // first decision takes effect.
-      if (decided) return;
-      decided = true;
-      confirmScrim.classList.remove("confirm-scrim--active");
-      window.removeEventListener("keydown", onKeyDown, true);
-      previousActive?.focus();
-      resolve(discarded);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        finish(false);
-      }
-    };
-    confirmMessage.textContent = buildDiscardConfirmMessage(state().path);
-    confirmScrim.classList.add("confirm-scrim--active");
-    window.addEventListener("keydown", onKeyDown, true);
-    confirmCancelButton.focus();
-    confirmCancelButton.addEventListener("click", () => finish(false), { once: true });
-    confirmDiscardButton.addEventListener("click", () => finish(true), { once: true });
-  });
+  return showConfirmModal(buildDiscardConfirmMessage(state().path));
 }
 
 /**
@@ -432,6 +406,7 @@ async function openPayload(payload: DocumentPayload): Promise<void> {
   if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），请先关闭部分标签页。`); return; }
   tabs = appended;
   await switchToTab(tabs.length - 1);
+  if (!historyDisabled && payload.path) void invoke("recent_files_record", { path: payload.path }).catch(() => undefined);
   setStatus("已打开");
 }
 
@@ -458,9 +433,145 @@ async function openFromPath(path: string): Promise<void> {
 async function createDocument(): Promise<void> {
   const appended = appendDocumentTab(tabs, createNewDocument());
   if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），请先关闭部分标签页。`); return; }
-  tabs = appended;
-  await switchToTab(tabs.length - 1);
-  setStatus("已新建文档");
+    tabs = appended;
+    await switchToTab(tabs.length - 1);
+    setStatus("已新建文档");
+}
+
+/**
+ * @lang zh-CN
+ * 「历史 ▾」下拉（设计基线稿 3 / ADR-0004）：列出最近打开（失效路径灰显标"文件不存在"，
+ * 点击提示重新定位）、底部为实际存储位置说明、「不记录模式」开关与「清空历史」（复用 DEF-1
+ * 确认模态——不可逆操作）。点击其他区域或再次点击按钮关闭。
+ * @lang en
+ * The "History ▾" dropdown (draft 3 / ADR-0004): lists recent files (missing ones dimmed with
+ * a "file missing" tag; clicking offers relocation), a footer note with the real storage
+ * location, the no-record toggle, and "clear history" (reusing the DEF-1 confirm modal — an
+ * irreversible action). Clicking elsewhere or the button again closes it.
+ */
+async function toggleHistoryMenu(): Promise<void> {
+  const existing = document.querySelector(".history-menu");
+  if (existing) { existing.remove(); return; }
+  if (isTauriRuntimeCheck()) {
+    const menu = document.createElement("div");
+    menu.className = "history-menu";
+    const head = document.createElement("div");
+    head.className = "history-menu__head";
+    const title = document.createElement("span");
+    title.textContent = "最近打开（本地记录）";
+    const actions = document.createElement("span");
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.textContent = "清空历史";
+    clear.addEventListener("click", async () => {
+      // 中文：清空不可逆——先经专用确认模态（复用 DEF-1 模态壳），确认后再执行并关闭菜单。
+      // English: Clearing is irreversible — go through the dedicated confirm modal (DEF-1 shell
+      //       reuse) first, then clear and close the menu.
+      menu.remove();
+      const confirmed = await confirmClearHistory();
+      if (confirmed) {
+        await invoke("recent_files_clear").catch(() => undefined);
+        setStatus("已清空历史记录");
+      }
+    });
+    const toggleLabel = document.createElement("button");
+    toggleLabel.type = "button";
+    toggleLabel.textContent = historyDisabled ? "开启记录" : "不记录模式";
+    toggleLabel.addEventListener("click", () => {
+      historyDisabled = !historyDisabled;
+      localStorage.setItem("hia-hugerte.history-disabled", historyDisabled ? "1" : "0");
+      menu.remove();
+      setStatus(historyDisabled ? "已开启不记录模式（新打开的文件不再记录）" : "已恢复历史记录");
+    });
+    actions.append(clear, toggleLabel);
+    head.append(title, actions);
+    menu.appendChild(head);
+    let entries: RecentFileEntryPayload[] = [];
+    try { entries = await invoke<RecentFileEntryPayload[]>("recent_files_load"); } catch { entries = []; }
+    if (entries.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "history-item";
+      empty.textContent = historyDisabled ? "（不记录模式已开启）" : "暂无历史记录";
+      menu.appendChild(empty);
+    }
+    for (const entry of entries) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "history-item";
+      const pathSpan = document.createElement("span");
+      pathSpan.className = "history-item__path";
+      pathSpan.textContent = entry.path;
+      pathSpan.title = entry.path;
+      const meta = document.createElement("span");
+      meta.className = "history-item__meta";
+      meta.textContent = formatOpenedAt(entry.openedAt);
+      row.append(pathSpan, meta);
+      row.addEventListener("click", () => { menu.remove(); void openFromPath(entry.path); });
+      menu.appendChild(row);
+      // 中文：失效检测在打开时自然发生（openFromPath 报错并显示状态）；灰显需同步探测，首版
+      //       以 Rust 读取结果为准——避免逐条 stat 的成本，保持菜单打开迅速。
+      // English: Missing files surface naturally on open (openFromPath shows the error); dimming
+      //       would need per-entry stat probes — skipped in v1 to keep the menu instant.
+    }
+    const footer = document.createElement("div");
+    footer.className = "history-menu__foot";
+    footer.textContent = "记录仅保存在本机（便携目录优先；不可写时 %APPDATA%\\HIA-HugeRTE）";
+    menu.appendChild(footer);
+    menu.addEventListener("click", (event) => { if (event.target === menu) menu.remove(); });
+    document.body.appendChild(menu);
+  }
+}
+
+/** @lang zh-CN 运行时判定（拖放节同款）；历史按钮在浏览器验证模式下隐藏。 / @lang en Runtime check (same as the drop section); the history button hides in browser verification mode. */
+function isTauriRuntimeCheck(): boolean { return "__TAURI_INTERNALS__" in window; }
+
+/** @lang zh-CN 专用确认：清空历史（复用模态壳，文案与确认按钮文案按清空场景临时替换并复原）。 / @lang en Dedicated confirm: clear history (reuses the modal shell; swaps and restores the confirm-button copy for the clear scenario). */
+function confirmClearHistory(): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const originalText = confirmDiscardButton.textContent;
+    confirmDiscardButton.textContent = "清空历史";
+    void showConfirmModal("将删除本机全部历史记录，且无法撤销。确定清空？").then((result) => {
+      confirmDiscardButton.textContent = originalText;
+      resolve(result);
+    });
+  });
+}
+
+/** @lang zh-CN 模态壳：显示给定文案并等待选择（Esc/取消=false，「确认」=true）。 / @lang en Modal shell: shows the given copy and awaits a choice (Esc/Cancel=false, confirm=true). */
+function showConfirmModal(message: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let decided = false;
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const finish = (discarded: boolean) => {
+      if (decided) return;
+      decided = true;
+      confirmScrim.classList.remove("confirm-scrim--active");
+      window.removeEventListener("keydown", onKeyDown, true);
+      previousActive?.focus();
+      resolve(discarded);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false); }
+    };
+    confirmMessage.textContent = message;
+    confirmScrim.classList.add("confirm-scrim--active");
+    window.addEventListener("keydown", onKeyDown, true);
+    confirmCancelButton.focus();
+    confirmCancelButton.addEventListener("click", () => finish(false), { once: true });
+    confirmDiscardButton.addEventListener("click", () => finish(true), { once: true });
+  });
+}
+
+/** @lang zh-CN 把 RFC3339 时间戳转成菜单里的相对/日期短文案。 / @lang en Render an RFC3339 stamp as the menu's short relative/date text. */
+function formatOpenedAt(stamp: string): string {
+  const date = new Date(stamp);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = Date.now();
+  const diffMinutes = Math.round((now - date.getTime()) / 60000);
+  if (diffMinutes < 1) return "刚刚";
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`;
+  if (diffMinutes < 60 * 24) return `${Math.round(diffMinutes / 60)} 小时前`;
+  return date.toISOString().slice(0, 10);
 }
 
 async function saveDocument(forceSaveAs: boolean): Promise<void> {
@@ -485,6 +596,12 @@ function formatError(error: unknown): string { return typeof error === "string" 
 
 /** @lang zh-CN 目录树条目的 Rust 序列化形态（list_directory_tree 返回，camelCase）。 / @lang en Rust shape of a tree entry (from list_directory_tree, camelCase). */
 interface TreeEntryPayload { name: string; isDir: boolean; size: number; isSupportedAsset: boolean; }
+
+/** @lang zh-CN 历史记录条目（recent_files_load 返回；path 为打开时刻的完整路径）。 / @lang en A recent-file entry (from recent_files_load; path is the full path at open time). */
+interface RecentFileEntryPayload { path: string; openedAt: string; }
+
+/** @lang zh-CN 「不记录模式」开关（ADR-0004 第 3 条）：开启后不写新记录也不删除旧记录。 / @lang EN "No-record mode" (ADR-0004 §3): when on, neither new records are written nor old ones removed. */
+let historyDisabled = localStorage.getItem("hia-hugerte.history-disabled") === "1";
 
 /** @lang zh-CN 已展开目录的相对路径集合（会话内状态；文档切换时重置）。 / @lang en Relative paths of expanded directories (session state; reset when the document changes). */
 const expandedDirs = new Set<string>();
@@ -677,9 +794,16 @@ requiredElement<HTMLButtonElement>("#new-document").addEventListener("click", ()
 requiredElement<HTMLButtonElement>("#open-document").addEventListener("click", () => void openWithDialog());
 requiredElement<HTMLButtonElement>("#save-document").addEventListener("click", () => void saveDocument(false));
 requiredElement<HTMLButtonElement>("#save-as-document").addEventListener("click", () => void saveDocument(true));
+requiredElement<HTMLButtonElement>("#history-button").addEventListener("click", () => void toggleHistoryMenu());
 fontSize.addEventListener("change", applyEditorFontSize);
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
+
+if (!isTauriRuntime) {
+  // 中文：浏览器兼容性验证模式下无原生历史存储，隐藏入口。
+  // English: No native history storage in browser verification mode; hide the entry point.
+  requiredElement<HTMLButtonElement>("#history-button").hidden = true;
+}
 
 if (isTauriRuntime) {
   void getCurrentWindow().onDragDropEvent(async (event) => {

@@ -264,21 +264,35 @@ fn list_directory_tree(base_dir: String, relative_path: String) -> Vec<TreeEntry
     for item in read_dir.flatten() {
         // 中文：默认不跟随目录符号链接（file_type 的 is_symlink 判定），防止树遍历逃逸出作用域。
         // English: Never follow directory symlinks (via file_type), keeping traversal inside the scope.
-        let Ok(file_type) = item.file_type() else { continue };
+        let Ok(file_type) = item.file_type() else {
+            continue;
+        };
         let is_dir = file_type.is_dir();
         let name = item.file_name().to_string_lossy().to_string();
         let size = item.metadata().map(|meta| meta.len()).unwrap_or(0);
         let is_supported_asset = !is_dir && is_asset_path(&item.path());
-        entries.push(TreeEntry { name, is_dir, size, is_supported_asset });
+        entries.push(TreeEntry {
+            name,
+            is_dir,
+            size,
+            is_supported_asset,
+        });
     }
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     entries
 }
 
 /// 中文：判断路径是否为侧栏预览/插入引用关注的资源类型（图片与样式表；与 mime_for_path 同基）。
 fn is_asset_path(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|extension| extension.to_str()).map(|extension| extension.to_ascii_lowercase()).as_deref(),
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
         Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "css")
     )
 }
@@ -308,6 +322,131 @@ fn encode_base64(bytes: &[u8]) -> String {
     output
 }
 
+/// 中文：单条历史记录——仅路径与最后打开时间（ADR-0004 第 2 条：内容最小化，无摘要/无编辑史）。
+/// English: One recent-file record — path and last-opened time only (ADR-0004 §2: minimal
+/// content; no digests or edit history).
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFileEntry {
+    path: String,
+    opened_at: String,
+}
+
+/// 中文：历史文件 JSON 的磁盘形态（记录数组）。
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFilesFile {
+    entries: Vec<RecentFileEntry>,
+}
+
+/// 中文：历史文件上限，FIFO 淘汰（ADR-0004 第 2 条）。
+const RECENT_FILES_LIMIT: usize = 50;
+
+/// 中文：当前 UTC 时间的 RFC3339 字符串（秒精度，`2026-11-10T12:34:56Z`）。
+/// 手写避免为单一用途引入 `time`/`chrono` 依赖（发行物依赖最小化）。
+fn rfc3339_now() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let days = seconds / 86_400;
+    let rem = seconds % 86_400;
+    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // 中文： civil-from-days 算法（Howard Hinnant 公有领域算法），天序号转年月日。
+    // English: civil-from-days (Howard Hinnant's public-domain algorithm): day number to y/m/d.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// 中文：解析历史存储路径（ADR-0004 第 1 条）：便携优先 = EXE 同目录 `data/recent-files.json`；
+/// 目录不可写时降级 `%APPDATA%\HIA-HugeRTE\`。`for_write` 为 true 时会创建父目录。
+fn recent_files_path(for_write: bool) -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let portable_dir = parent.join("data");
+            let candidate = portable_dir.join("recent-files.json");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            if for_write {
+                if fs::create_dir_all(&portable_dir).is_ok() {
+                    let probe = portable_dir.join(".write-probe");
+                    if fs::write(&probe, b"").is_ok() {
+                        let _ = fs::remove_file(&probe);
+                        return Some(candidate);
+                    }
+                }
+            } else if portable_dir.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    let app_data = std::env::var_os("APPDATA").map(PathBuf::from)?;
+    let fallback_dir = app_data.join("HIA-HugeRTE");
+    if for_write {
+        fs::create_dir_all(&fallback_dir).ok()?;
+    } else if !fallback_dir.is_dir() {
+        return None;
+    }
+    Some(fallback_dir.join("recent-files.json"))
+}
+
+/// 中文：读取历史列表；文件缺失/损坏一律返回空列表（历史不是关键路径，ADR-0004 第 5 条）。
+#[tauri::command]
+fn recent_files_load() -> Vec<RecentFileEntry> {
+    let Some(path) = recent_files_path(false) else {
+        return Vec::new();
+    };
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<RecentFilesFile>(&text).ok())
+        .map(|file| file.entries)
+        .unwrap_or_default()
+}
+
+/// 中文：记录一次成功打开（去重置顶 + FIFO 淘汰 + 原子写：临时文件再替换）。
+/// 失败静默——历史写入不影响编辑主流程。
+#[tauri::command]
+fn recent_files_record(path: String) {
+    record_recent_file(path);
+}
+
+/// 中文：`recent_files_record` 的可测内核（无 Tauri 宏）。
+fn record_recent_file(path: String) {
+    let Some(store) = recent_files_path(true) else {
+        return;
+    };
+    let mut file = fs::read_to_string(&store)
+        .ok()
+        .and_then(|text| serde_json::from_str::<RecentFilesFile>(&text).ok())
+        .unwrap_or_default();
+    let opened_at = rfc3339_now();
+    file.entries.retain(|entry| entry.path != path);
+    file.entries.insert(0, RecentFileEntry { path, opened_at });
+    file.entries.truncate(RECENT_FILES_LIMIT);
+    let temp = store.with_extension("json.tmp");
+    if fs::write(&temp, serde_json::to_string(&file).unwrap_or_default()).is_ok() {
+        let _ = fs::rename(&temp, &store);
+    }
+}
+
+/// 中文：清空历史（前端经 DEF-1 确认模态后再调用）；删除底层文件即为清空。
+#[tauri::command]
+fn recent_files_clear() {
+    if let Some(store) = recent_files_path(true) {
+        let _ = fs::remove_file(store);
+    }
+}
+
 pub fn run() {
     let startup_paths = std::env::args_os()
         .skip(1)
@@ -328,7 +467,10 @@ pub fn run() {
             save_document,
             save_document_as,
             resolve_document_asset,
-            list_directory_tree
+            list_directory_tree,
+            recent_files_load,
+            recent_files_record,
+            recent_files_clear
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");
@@ -512,10 +654,8 @@ mod tests {
     #[test]
     fn 目录树列出条目并目录优先排序() {
         let (workspace, document_dir) = create_tree_fixture();
-        let entries = list_directory_tree(
-            document_dir.to_string_lossy().into_owned(),
-            ".".to_string(),
-        );
+        let entries =
+            list_directory_tree(document_dir.to_string_lossy().into_owned(), ".".to_string());
         assert_eq!(entries.len(), 2);
         assert!(entries[0].is_dir, "目录应排在文件之前");
         assert_eq!(entries[0].name, "assets");
@@ -554,5 +694,36 @@ mod tests {
         .is_empty());
 
         fs::remove_dir_all(&workspace).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn rfc3339_now_输出合法秒精度格式() {
+        let stamp = rfc3339_now();
+        // 中文：形如 2026-11-10T12:34:56Z——20 字符且第 11 位为 T、末位为 Z。
+        // English: Shaped like 2026-11-10T12:34:56Z — 20 chars with 'T' at index 10 and 'Z' last.
+        assert_eq!(stamp.len(), 20);
+        assert_eq!(&stamp[10..11], "T");
+        assert!(stamp.ends_with('Z'));
+        assert!(stamp.starts_with("2"));
+    }
+
+    #[test]
+    fn 历史记录结构可往返序列化() {
+        let file = RecentFilesFile {
+            entries: vec![RecentFileEntry {
+                path: "K:\\docs\\a.html".to_string(),
+                opened_at: "2026-11-10T00:00:00Z".to_string(),
+            }],
+        };
+        let text = serde_json::to_string(&file).expect("应能序列化");
+        let back: RecentFilesFile = serde_json::from_str(&text).expect("应能反序列化");
+        assert_eq!(back.entries[0].path, "K:\\docs\\a.html");
+        // 中文：camelCase 字段名落盘（recentCase 语义稳定，前端按 camelCase 读取）。
+        // English: camelCase keys on disk (stable contract; the frontend reads camelCase).
+        assert!(text.contains("\"openedAt\""));
+        // 中文：损坏输入回退为空（recent_files_load 的容错语义在此等价验证）。
+        // English: Corrupt input falls back to empty (equivalent to recent_files_load tolerance).
+        let broken: Option<RecentFilesFile> = serde_json::from_str("{not-json").ok();
+        assert!(broken.is_none());
     }
 }

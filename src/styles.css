@@ -86,3 +86,19 @@ button, select { font: inherit; }
 .tab-overflow-menu { position: fixed; z-index: 45; top: 8rem; right: 1rem; display: grid; min-width: 12rem; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 22%); padding: .25rem; }
 .tab-overflow-menu button { text-align: left; font: inherit; font-size: .85rem; padding: .4rem .6rem; border: none; background: transparent; border-radius: .3rem; cursor: pointer; color: #15202b; }
 .tab-overflow-menu button:hover { background: #eef3f5; }
+
+/* 中文：历史文件下拉（原型稿 3，W-hrt-P4 F2 / ADR-0004）：头部（标题+清空+不记录开关）、
+   条目行（失效路径由打开反馈提示）、底部存储位置说明。 */
+/* English: Recent-files dropdown (draft 3, W-hrt-P4 F2 / ADR-0004): header (title + clear +
+   no-record toggle), item rows (missing files surface via open feedback), footer storage note. */
+.history-menu { position: fixed; z-index: 45; top: 5rem; right: 1rem; width: 24rem; max-width: calc(100vw - 2rem); border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 22%); overflow: hidden; display: grid; }
+.history-menu__head { display: flex; justify-content: space-between; align-items: center; gap: .4rem; padding: .5rem .7rem; border-bottom: 1px solid #e0e7ea; font-size: .8rem; color: #425466; }
+.history-menu__head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-menu__head > span:last-child { display: inline-flex; gap: .4rem; flex: none; }
+.history-menu__head button { border: 1px solid #d4dde1; background: #fff; color: #034661; font: inherit; font-size: .75rem; cursor: pointer; border-radius: .3rem; padding: .12rem .45rem; }
+.history-menu__head button:hover { background: #e1fdf9; }
+.history-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: center; padding: .45rem .7rem; font-size: .84rem; color: #15202b; border: none; background: transparent; text-align: left; cursor: pointer; font-family: inherit; }
+.history-item:hover { background: #eef3f5; }
+.history-item__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-item__meta { color: #7d939f; font-size: .74rem; white-space: nowrap; }
+.history-menu__foot { padding: .4rem .7rem; border-top: 1px solid #e0e7ea; color: #98a8b1; font-size: .72rem; }
