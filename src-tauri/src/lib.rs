@@ -222,6 +222,67 @@ fn mime_for_path(path: &Path) -> &'static str {
     }
 }
 
+/// 中文：目录树条目的白名单元数据——只暴露展示与插入引用所需字段，不暴露权限、时间戳等系统信息。
+/// English: Whitelisted metadata for a tree entry — only the fields needed for display and
+/// reference insertion; no permissions, timestamps or other system metadata.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeEntry {
+    name: String,
+    is_dir: bool,
+    size: u64,
+    is_supported_asset: bool,
+}
+
+/// 中文：按 ADR-0003 列出目录树的一层内容。作用域与 `resolve_document_asset` 同源
+/// （文档目录的父目录），canonicalize 后前缀校验拒绝越界与链接逃逸；返回条目按
+/// 目录优先、名称排序，仅含白名单元数据。失败一律返回空数组由前端降级为空态。
+/// English: List one level of a directory tree per ADR-0003. The scope matches
+/// `resolve_document_asset` (the document directory's parent); canonicalize plus prefix checks
+/// reject escapes and link jumps. Entries sort directories first then by name and carry only
+/// whitelisted metadata. Any failure returns an empty vector for the frontend's empty state.
+#[tauri::command]
+fn list_directory_tree(base_dir: String, relative_path: String) -> Vec<TreeEntry> {
+    let mut entries: Vec<TreeEntry> = Vec::new();
+    let Some(base) = Path::new(&base_dir).canonicalize().ok() else {
+        return entries;
+    };
+    let Some(scope) = base.parent().map(Path::to_path_buf) else {
+        return entries;
+    };
+    let joined = base.join(&relative_path);
+    let Ok(canonical) = joined.canonicalize() else {
+        return entries;
+    };
+    let scope_with_sep = scope.join("");
+    if canonical != scope && !canonical.starts_with(&scope_with_sep) {
+        return entries;
+    }
+    let Ok(read_dir) = fs::read_dir(&canonical) else {
+        return entries;
+    };
+    for item in read_dir.flatten() {
+        // 中文：默认不跟随目录符号链接（file_type 的 is_symlink 判定），防止树遍历逃逸出作用域。
+        // English: Never follow directory symlinks (via file_type), keeping traversal inside the scope.
+        let Ok(file_type) = item.file_type() else { continue };
+        let is_dir = file_type.is_dir();
+        let name = item.file_name().to_string_lossy().to_string();
+        let size = item.metadata().map(|meta| meta.len()).unwrap_or(0);
+        let is_supported_asset = !is_dir && is_asset_path(&item.path());
+        entries.push(TreeEntry { name, is_dir, size, is_supported_asset });
+    }
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    entries
+}
+
+/// 中文：判断路径是否为侧栏预览/插入引用关注的资源类型（图片与样式表；与 mime_for_path 同基）。
+fn is_asset_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()).map(|extension| extension.to_ascii_lowercase()).as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "css")
+    )
+}
+
 /// 中文：标准 Base64 编码，避免为单一用途引入额外依赖。
 fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -266,7 +327,8 @@ pub fn run() {
             open_document_dialog,
             save_document,
             save_document_as,
-            resolve_document_asset
+            resolve_document_asset,
+            list_directory_tree
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");
@@ -433,5 +495,64 @@ mod tests {
         assert!(result.is_none());
 
         fs::remove_dir(&directory).expect("应能清理临时测试目录");
+    }
+
+    /// 中文：构造"父目录/工作区/文档目录"结构与若干条目，供目录树测试复用。
+    fn create_tree_fixture() -> (PathBuf, PathBuf) {
+        let workspace = create_test_directory();
+        let document_dir = workspace.join("doc");
+        fs::create_dir(&document_dir).expect("应能创建文档目录");
+        fs::create_dir(document_dir.join("assets")).expect("应能创建子目录");
+        fs::write(document_dir.join("page.html"), "<p>x</p>").expect("应能写入文件");
+        fs::write(document_dir.join("assets").join("banner.png"), "png").expect("应能写入图片");
+        fs::write(document_dir.join("assets").join("notes.css"), "body{}").expect("应能写入样式");
+        (workspace, document_dir)
+    }
+
+    #[test]
+    fn 目录树列出条目并目录优先排序() {
+        let (workspace, document_dir) = create_tree_fixture();
+        let entries = list_directory_tree(
+            document_dir.to_string_lossy().into_owned(),
+            ".".to_string(),
+        );
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0].is_dir, "目录应排在文件之前");
+        assert_eq!(entries[0].name, "assets");
+        assert_eq!(entries[1].name, "page.html");
+        assert!(!entries[1].is_supported_asset, "html 不属于资源白名单");
+
+        let sub = list_directory_tree(
+            document_dir.to_string_lossy().into_owned(),
+            "assets".to_string(),
+        );
+        assert_eq!(sub.len(), 2);
+        assert!(sub.iter().all(|entry| entry.is_supported_asset));
+        assert_eq!(sub[0].name, "banner.png");
+        assert_eq!(sub[1].name, "notes.css");
+
+        fs::remove_dir_all(&workspace).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn 目录树拒绝越界与缺失目录() {
+        let (workspace, document_dir) = create_tree_fixture();
+        assert!(list_directory_tree(
+            document_dir.to_string_lossy().into_owned(),
+            "../../..".to_string()
+        )
+        .is_empty());
+        assert!(list_directory_tree(
+            document_dir.to_string_lossy().into_owned(),
+            "missing-dir".to_string()
+        )
+        .is_empty());
+        assert!(list_directory_tree(
+            document_dir.to_string_lossy().into_owned(),
+            "page.html".to_string()
+        )
+        .is_empty());
+
+        fs::remove_dir_all(&workspace).expect("应能清理临时测试目录");
     }
 }

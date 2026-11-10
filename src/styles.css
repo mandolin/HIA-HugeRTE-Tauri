@@ -17,6 +17,36 @@ button, select { font: inherit; }
 .editor-options select { padding: .15rem; border: 1px solid #a8b8c0; border-radius: .25rem; background: #fff; }
 #document-status { color: #526874; font-size: .85rem; }
 .editor-container { position: relative; min-height: 0; padding: .75rem; }
+
+/* 中文：资源管理侧栏（原型稿 2，W-hrt-P4 F1 / ADR-0003 只读）：260px 左栏 + 右侧编辑区；
+   目录行首为真实展开/收缩按钮（维护者修订），支持键盘（Enter/Space）。 */
+/* English: Explorer sidebar (draft 2, W-hrt-P4 F1 / read-only ADR-0003): a 260px left column
+   beside the editor; directory rows start with a real expand/collapse button (maintainer
+   revision), keyboard-operable (Enter/Space). */
+.editor-container > .workbench { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; height: 100%; }
+.editor-container > .workbench:has(+ #drop-indicator) { height: 100%; }
+.editor-container > .workbench > #hugerte-editor { display: none; }
+.editor-container:has(#explorer:not([hidden])) > .workbench { grid-template-columns: 260px minmax(0, 1fr); }
+.explorer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; margin-right: .55rem; }
+.explorer[hidden] { display: none; }
+.explorer__head { display: flex; align-items: center; justify-content: space-between; gap: .3rem; padding: .45rem .6rem; border-bottom: 1px solid #d4dde1; font-size: .8rem; color: #425466; }
+.explorer__scope { display: block; color: #7d939f; font-size: .72rem; }
+.explorer__refresh { border: none; background: transparent; color: #425466; cursor: pointer; font: inherit; }
+.explorer__refresh:hover { color: #034661; }
+.tree { min-height: 0; padding: .35rem .3rem; overflow: auto; font-size: .84rem; }
+.tree__row { display: flex; align-items: center; gap: .35rem; padding: .22rem .4rem; border-radius: .3rem; cursor: default; }
+.tree__row--asset { color: #425466; cursor: pointer; }
+.tree__row--asset:hover { background: #eef3f5; }
+.tree__row--active { background: #e1fdf9; color: #034661; font-weight: 600; }
+.tree__row:focus-visible { outline: 2px solid #034661; outline-offset: -2px; }
+.tree__indent-1 { margin-left: 1rem; } .tree__indent-2 { margin-left: 1.8rem; } .tree__indent-3 { margin-left: 2.6rem; }
+.tree__caret { width: 1.15rem; flex: none; border: none; background: transparent; color: #7d939f; font-size: .72rem; cursor: pointer; padding: 0; }
+.tree__caret:hover, .tree__caret:focus-visible { color: #034661; }
+.tree__empty { padding: .3rem .5rem; color: #98a8b1; font-size: .8rem; }
+.explorer__preview { margin: .45rem; padding: .5rem .6rem; border: 1px solid #e0e7ea; border-radius: .4rem; font-size: .78rem; color: #425466; background: #fbfdfd; display: grid; gap: .3rem; }
+.explorer__preview[hidden] { display: none; }
+.explorer__preview button { font: inherit; border: 1px solid #8cc2cf; border-radius: .3rem; background: #fff; color: #034661; padding: .15rem .5rem; cursor: pointer; justify-self: start; }
+.explorer__preview button:hover { background: #e1fdf9; }
 .editor-container > .tox { height: 100% !important; border: 1px solid #b8c7ce; border-radius: .45rem; }
 .drop-indicator { position: absolute; z-index: 10; display: none; place-items: center; inset: .75rem; border: 3px dashed #034661; border-radius: .45rem; color: #034661; font-size: 1.2rem; font-weight: 700; pointer-events: none; background: rgb(225 253 249 / 90%); }
 .drop-indicator--active { display: grid; }

@@ -45,7 +45,15 @@ app.innerHTML = `
     </header>
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
     <section class="editor-options" aria-label="编辑器设置"><label>编辑字号 <select id="editor-font-size"><option value="14px">14</option><option value="16px" selected>16</option><option value="18px">18</option><option value="20px">20</option></select></label><span id="document-status" role="status">准备就绪</span></section>
-    <section class="editor-container"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea><div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div></section>
+    <section class="editor-container">
+      <aside id="explorer" class="explorer" aria-label="资源管理" hidden>
+        <div class="explorer__head"><span>资源管理 <span id="explorer-scope" class="explorer__scope"></span></span><button id="explorer-refresh" type="button" title="刷新目录树" class="explorer__refresh">⟳</button></div>
+        <div id="explorer-tree" class="tree" role="tree"></div>
+        <div id="explorer-preview" class="explorer__preview" hidden></div>
+      </aside>
+      <div id="workbench" class="workbench"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
+      <div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div>
+    </section>
     <div id="confirm-scrim" class="confirm-scrim" role="presentation">
       <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
         <h2 id="confirm-title">放弃未保存的修改？</h2>
@@ -65,6 +73,10 @@ const editorTarget = requiredElement<HTMLTextAreaElement>("#hugerte-editor");
 const dropIndicator = requiredElement<HTMLDivElement>("#drop-indicator");
 const fontSize = requiredElement<HTMLSelectElement>("#editor-font-size");
 const tabbar = requiredElement<HTMLDivElement>("#tabbar");
+const explorerPanel = requiredElement<HTMLElement>("#explorer");
+const explorerTree = requiredElement<HTMLDivElement>("#explorer-tree");
+const explorerScope = requiredElement<HTMLSpanElement>("#explorer-scope");
+const explorerPreview = requiredElement<HTMLDivElement>("#explorer-preview");
 const confirmScrim = requiredElement<HTMLDivElement>("#confirm-scrim");
 const confirmMessage = requiredElement<HTMLParagraphElement>("#confirm-message");
 const confirmCancelButton = requiredElement<HTMLButtonElement>("#confirm-cancel");
@@ -294,6 +306,9 @@ async function replaceDocument(nextState: DocumentState): Promise<void> {
   await applyDocumentToEditor(nextState);
   isReplacingContent = false;
   refreshDocumentHeader();
+  expandedDirs.clear();
+  expandedDirs.add(".");
+  await renderExplorerTree();
 }
 
 /**
@@ -319,6 +334,9 @@ async function switchToTab(index: number): Promise<void> {
   isReplacingContent = false;
   refreshDocumentHeader();
   applyEditorFontSize();
+  expandedDirs.clear();
+  expandedDirs.add(".");
+  await renderExplorerTree();
   setStatus("已切换标签页");
 }
 
@@ -464,6 +482,167 @@ async function saveDocument(forceSaveAs: boolean): Promise<void> {
 }
 
 function formatError(error: unknown): string { return typeof error === "string" ? error : "发生未知错误。"; }
+
+/** @lang zh-CN 目录树条目的 Rust 序列化形态（list_directory_tree 返回，camelCase）。 / @lang en Rust shape of a tree entry (from list_directory_tree, camelCase). */
+interface TreeEntryPayload { name: string; isDir: boolean; size: number; isSupportedAsset: boolean; }
+
+/** @lang zh-CN 已展开目录的相对路径集合（会话内状态；文档切换时重置）。 / @lang en Relative paths of expanded directories (session state; reset when the document changes). */
+const expandedDirs = new Set<string>();
+
+/**
+ * @lang zh-CN
+ * 渲染资源树（ADR-0003 + 设计基线 v1.1）：根行 = 文档目录；子行懒加载——目录行的行首是
+ * **真实展开/收缩按钮**（维护者修订：可键盘到达，Enter/Space 切换），文件行点击图片/样式
+ * 时在预览卡显示相对引用与「插入相对引用」。无文档或读取失败显示空态文案。
+ * @lang en
+ * Render the explorer tree (ADR-0003 + design baseline v1.1): root row = document directory;
+ * children lazy-load. Directory rows start with a real expand/collapse button (maintainer
+ * revision: keyboard-reachable via Enter/Space); clicking an image/style shows the preview card
+ * with its relative reference and an "insert reference" action. Empty state when no document or
+ * on read failure.
+ */
+async function renderExplorerTree(): Promise<void> {
+  explorerTree.textContent = "";
+  explorerPreview.hidden = true;
+  const baseDir = state().baseDir;
+  if (!baseDir) {
+    explorerPanel.hidden = true;
+    return;
+  }
+  explorerPanel.hidden = false;
+  explorerScope.textContent = "作用域：文档目录及其父目录";
+  const rootRow = buildTreeRow({ name: getDocumentLabel(state().path) ?? "文档目录", isDir: true, size: 0, isSupportedAsset: false }, ".", expandedDirs.has("."));
+  rootRow.classList.add("tree__row--active");
+  explorerTree.appendChild(rootRow);
+  if (!expandedDirs.has(".")) {
+    const hint = document.createElement("div");
+    hint.className = "tree__empty";
+    hint.textContent = "展开目录以浏览资源";
+    explorerTree.appendChild(hint);
+    return;
+  }
+  await appendTreeChildren(explorerTree, baseDir, ".", 1);
+}
+
+/**
+ * @lang zh-CN
+ * 向容器追加某目录一层的子行（懒加载一层；子目录再次展开时再取）。读取失败显示空态文案。
+ * @lang en
+ * Append one level of child rows for a directory (lazy per level; subdirectories fetch on
+ * expand). Read failures render the empty-state text.
+ */
+async function appendTreeChildren(container: HTMLElement, baseDir: string, relativePath: string, indent: number): Promise<void> {
+  let entries: TreeEntryPayload[] = [];
+  try {
+    entries = await invoke<TreeEntryPayload[]>("list_directory_tree", { baseDir, relativePath });
+  } catch {
+    entries = [];
+  }
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "tree__empty";
+    empty.textContent = indent === 1 ? "目录为空或不可读" : "（空）";
+    container.appendChild(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const childRelative = relativePath === "." ? entry.name : `${relativePath}/${entry.name}`;
+    const row = buildTreeRow(entry, childRelative, expandedDirs.has(childRelative));
+    row.classList.add(`tree__indent-${Math.min(indent, 3)}`);
+    container.appendChild(row);
+    if (entry.isDir && expandedDirs.has(childRelative)) {
+      await appendTreeChildren(container, baseDir, childRelative, indent + 1);
+    }
+  }
+}
+
+/**
+ * @lang zh-CN
+ * 构造单行：目录行带真实展开/收缩按钮（toggleExpandDir，键盘可达）；资源行可点击预览。
+ * @lang en
+ * Build one row: directory rows carry a real expand/collapse button (toggleExpandDir,
+ * keyboard-reachable); asset rows are clickable for preview.
+ */
+function buildTreeRow(entry: TreeEntryPayload, relativePath: string, expanded: boolean): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = `tree__row${entry.isSupportedAsset ? " tree__row--asset" : ""}`;
+  row.setAttribute("role", "treeitem");
+  row.tabIndex = 0;
+  if (entry.isDir) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "tree__caret";
+    toggle.textContent = expanded ? "▾" : "▸";
+    toggle.title = expanded ? "收起目录" : "展开目录";
+    toggle.setAttribute("aria-expanded", String(expanded));
+    toggle.addEventListener("click", (event) => { event.stopPropagation(); void toggleExpandDir(relativePath); });
+    row.appendChild(toggle);
+  } else {
+    const spacer = document.createElement("span");
+    spacer.className = "tree__caret";
+    row.appendChild(spacer);
+  }
+  const icon = document.createElement("span");
+  icon.textContent = entry.isDir ? "📁" : entry.isSupportedAsset ? "🖼" : "📄";
+  row.appendChild(icon);
+  const name = document.createElement("span");
+  name.textContent = entry.name;
+  row.appendChild(name);
+  if (entry.isSupportedAsset) {
+    row.addEventListener("click", () => void showAssetPreview(relativePath));
+    row.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); void showAssetPreview(relativePath); } });
+  }
+  return row;
+}
+
+/**
+ * @lang zh-CN
+ * 展开/收缩一个目录：更新集合后整树重绘（数据量小，重绘简单可靠且保持展开状态）。
+ * @lang en
+ * Expand or collapse one directory: update the set and re-render the whole tree (small data;
+ * re-render is simple, reliable and preserves expansion state).
+ */
+async function toggleExpandDir(relativePath: string): Promise<void> {
+  if (expandedDirs.has(relativePath)) expandedDirs.delete(relativePath);
+  else expandedDirs.add(relativePath);
+  await renderExplorerTree();
+}
+
+/**
+ * @lang zh-CN
+ * 资源预览卡：显示名称、相对引用（以活动文档目录为基准）与大小；「插入相对引用」按钮把
+ * 最短相对路径插入编辑器（convert_urls:false 契约下由 HugeRTE 原样保留）。
+ * @lang en
+ * Asset preview card: name, relative reference (against the active document's directory) and
+ * size; "insert reference" places the shortest relative path into the editor (kept verbatim
+ * under the convert_urls:false contract).
+ */
+async function showAssetPreview(relativePath: string): Promise<void> {
+  const baseDir = state().baseDir;
+  if (!baseDir) return;
+  try {
+    const dataUri = await invoke<string | null>("resolve_document_asset", { baseDir, relativePath });
+    if (!dataUri) return;
+    const size = Math.round((dataUri.length - dataUri.indexOf(",") - 1) * 3 / 4 / 1024);
+    explorerPreview.hidden = false;
+    explorerPreview.textContent = "";
+    const title = document.createElement("b");
+    title.textContent = relativePath.split("/").pop() ?? relativePath;
+    const ref = document.createElement("div");
+    ref.className = "explorer__ref";
+    ref.textContent = `相对引用：${relativePath} · 约 ${size} KB`;
+    const insert = document.createElement("button");
+    insert.type = "button";
+    insert.textContent = "插入相对引用";
+    insert.addEventListener("click", () => {
+      editor?.insertContent(`<img src="${relativePath}" alt="">`);
+      editor?.nodeChanged();
+    });
+    explorerPreview.append(title, ref, insert);
+  } catch {
+    explorerPreview.hidden = true;
+  }
+}
 
 /**
  * @lang zh-CN
