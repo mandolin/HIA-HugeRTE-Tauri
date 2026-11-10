@@ -1,6 +1,6 @@
 # Third-party notices
 
-The `v0.1.0` portable release contains the following direct runtime components. Exact resolved dependency graphs and integrity information are locked in `package-lock.json` and `src-tauri/Cargo.lock`.
+The `v0.2.0` portable release contains the following direct runtime components. Exact resolved dependency graphs and integrity information are locked in `package-lock.json` and `src-tauri/Cargo.lock`.
 
 | Component | Resolved version | License | Source / role |
 | --- | --- | --- | --- |
@@ -8,6 +8,7 @@ The `v0.1.0` portable release contains the following direct runtime components. 
 | Tauri Rust runtime | 2.11.5 | MIT OR Apache-2.0 | Native desktop host compiled into the Windows executable. |
 | Tauri JavaScript API | 2.11.1 | MIT OR Apache-2.0 | Local frontend bridge package. |
 | Tauri Dialog plugin | 2.7.2 | MIT OR Apache-2.0 | Native open/save dialog integration. |
+| serde_json (Rust) | 1.0.145 | MIT OR Apache-2.0 | Recent-file history persistence (added in v0.2.0). |
 
 Microsoft Edge WebView2 Runtime is not included in the portable ZIP; it is a system dependency. The portable package includes no third-party fonts, images or copied reference-project assets.
 

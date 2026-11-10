@@ -783,6 +783,12 @@ async function openStartupDocuments(): Promise<void> {
       const appended = appendDocumentTab(nextTabs, documentFromPayload(payload));
       if (!appended) { skipped += 1; continue; }
       nextTabs = appended;
+      // 中文：启动参数打开同样计入历史（ADR-0004：「打开过」即记录；openPayload 之外的打开路径
+      //       也必须落记录，否则启动文件的快捷重开缺失——回归冒烟发现的缺陷）。
+      // English: Startup-arg opens count toward history too (ADR-0004: "opened" means recorded;
+      //       open paths outside openPayload must record as well, otherwise quick reopen of
+      //       startup files is missing — defect surfaced by the release smoke).
+      if (!historyDisabled && payload.path) void invoke("recent_files_record", { path: payload.path }).catch(() => undefined);
     }
     tabs = nextTabs;
     await switchToTab(1 >= tabs.length ? 0 : 1);
