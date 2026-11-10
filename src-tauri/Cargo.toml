@@ -1,6 +1,6 @@
 [package]
 name = "hia-hugerte-tauri"
-version = "0.1.0"
+version = "0.1.0-fix.2"
 description = "A portable Windows HTML editor built with HugeRTE and Tauri"
 authors = ["HIA HugeRTE Tauri contributors"]
 edition = "2021"
