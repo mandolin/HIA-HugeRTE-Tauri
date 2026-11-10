@@ -2,7 +2,7 @@
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 720px; height: 100%; margin: 0; }
 button, select { font: inherit; }
-.application-shell { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100%; }
+.application-shell { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); height: 100%; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; color: #fff; background: #034661; }
 .app-brand { display: flex; min-width: 0; align-items: center; gap: .7rem; }
 .app-brand__mark { display: inline-grid; width: 2rem; height: 2rem; place-items: center; border-radius: .45rem; color: #034661; font-weight: 800; background: #e1fdf9; }
@@ -16,25 +16,32 @@ button, select { font: inherit; }
 .editor-options label { display: inline-flex; align-items: center; gap: .5rem; color: #425466; font-size: .85rem; }
 .editor-options select { padding: .15rem; border: 1px solid #a8b8c0; border-radius: .25rem; background: #fff; }
 #document-status { color: #526874; font-size: .85rem; }
-.editor-container { position: relative; min-height: 0; padding: .75rem; }
+.editor-container { position: relative; min-height: 0; padding: .75rem; display: grid; grid-template-rows: minmax(0, 1fr); }
 
-/* 中文：资源管理侧栏（原型稿 2，W-hrt-P4 F1 / ADR-0003 只读）：260px 左栏 + 右侧编辑区；
+/* 中文：工作台行（W-hrt-P4 F1）：资源侧栏与编辑区**并排**——侧栏定宽 260px 且内部滚动，
+   编辑区占满剩余宽度；侧栏隐藏（无文档）时编辑区独占整行。显式 flex 避免 grid+:has 的脆弱性。 */
+/* English: Workbench row (W-hrt-P4 F1): the explorer sidebar and the editor sit side by side —
+   the sidebar is a fixed 260px column scrolling internally while the editor fills the rest;
+   with the sidebar hidden (no document) the editor spans the row. Explicit flex avoids the
+   fragile grid+:has() combination. */
+.editor-container > .workbench { display: flex; align-items: stretch; min-height: 0; height: 100%; gap: .55rem; }
+.editor-container > .workbench > .editor-pane { flex: 1 1 auto; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
+.editor-container > .workbench > .editor-pane > #hugerte-editor { width: 100%; height: 100%; }
+
+/* 中文：资源管理侧栏（原型稿 2，W-hrt-P4 F1 / ADR-0003 只读）：定宽、自身滚动、
    目录行首为真实展开/收缩按钮（维护者修订），支持键盘（Enter/Space）。 */
-/* English: Explorer sidebar (draft 2, W-hrt-P4 F1 / read-only ADR-0003): a 260px left column
-   beside the editor; directory rows start with a real expand/collapse button (maintainer
-   revision), keyboard-operable (Enter/Space). */
-.editor-container > .workbench { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; height: 100%; }
-.editor-container > .workbench:has(+ #drop-indicator) { height: 100%; }
-.editor-container > .workbench > #hugerte-editor { display: none; }
-.editor-container:has(#explorer:not([hidden])) > .workbench { grid-template-columns: 260px minmax(0, 1fr); }
-.explorer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; margin-right: .55rem; }
+/* English: Explorer sidebar (draft 2, W-hrt-P4 F1 / read-only ADR-0003): fixed width, scrolls
+   itself; directory rows start with a real expand/collapse button (maintainer revision),
+   keyboard-operable (Enter/Space). */
+.explorer { flex: 0 0 260px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; max-height: 100%; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; overflow: hidden; }
 .explorer[hidden] { display: none; }
 .explorer__head { display: flex; align-items: center; justify-content: space-between; gap: .3rem; padding: .45rem .6rem; border-bottom: 1px solid #d4dde1; font-size: .8rem; color: #425466; }
 .explorer__scope { display: block; color: #7d939f; font-size: .72rem; }
 .explorer__refresh { border: none; background: transparent; color: #425466; cursor: pointer; font: inherit; }
 .explorer__refresh:hover { color: #034661; }
 .tree { min-height: 0; padding: .35rem .3rem; overflow: auto; font-size: .84rem; }
-.tree__row { display: flex; align-items: center; gap: .35rem; padding: .22rem .4rem; border-radius: .3rem; cursor: default; }
+.tree__row { display: flex; align-items: center; gap: .35rem; padding: .22rem .4rem; border-radius: .3rem; cursor: default; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tree__row > span:not(.tree__caret) { overflow: hidden; text-overflow: ellipsis; }
 .tree__row--asset { color: #425466; cursor: pointer; }
 .tree__row--asset:hover { background: #eef3f5; }
 .tree__row--active { background: #e1fdf9; color: #034661; font-weight: 600; }
@@ -47,7 +54,21 @@ button, select { font: inherit; }
 .explorer__preview[hidden] { display: none; }
 .explorer__preview button { font: inherit; border: 1px solid #8cc2cf; border-radius: .3rem; background: #fff; color: #034661; padding: .15rem .5rem; cursor: pointer; justify-self: start; }
 .explorer__preview button:hover { background: #e1fdf9; }
-.editor-container > .tox { height: 100% !important; border: 1px solid #b8c7ce; border-radius: .45rem; }
+
+/* 中文：HugeRTE 把 textarea 原地替换为 .tox 结构（实测层级：.tox > .tox-editor-container
+   > [tox-editor-header + tox-sidebar-wrap > tox-edit-area > iframe] + tox-statusbar）。
+   editor-pane 是单行 grid，.tox 拉满；.tox 内部用 flex 列让 .tox-editor-container 吃掉
+   剩余高度，edit-area/iframe 链条逐层 100%，编辑主体才能撑满面板。 */
+/* English: HugeRTE replaces the textarea in place with the .tox structure (probed hierarchy:
+   .tox > .tox-editor-container > [tox-editor-header + tox-sidebar-wrap > tox-edit-area > iframe]
+   + tox-statusbar). .editor-pane is a one-row grid stretching .tox; inside, flex-column lets
+   .tox-editor-container take the remaining height while edit-area/iframe chain to 100% so the
+   editing body fills the pane. */
+.editor-pane > .tox { height: 100% !important; min-height: 0; display: flex !important; flex-direction: column; border: 1px solid #b8c7ce; border-radius: .45rem; }
+.editor-pane > .tox > .tox-editor-container { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.editor-pane > .tox > .tox-editor-container > .tox-sidebar-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.editor-pane > .tox .tox-edit-area { flex: 1 1 auto; min-height: 0; }
+.editor-pane > .tox .tox-edit-area > iframe { flex: 1 1 auto; height: 100% !important; min-height: 0; }
 .drop-indicator { position: absolute; z-index: 10; display: none; place-items: center; inset: .75rem; border: 3px dashed #034661; border-radius: .45rem; color: #034661; font-size: 1.2rem; font-weight: 700; pointer-events: none; background: rgb(225 253 249 / 90%); }
 .drop-indicator--active { display: grid; }
 

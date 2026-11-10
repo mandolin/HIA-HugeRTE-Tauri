@@ -47,12 +47,14 @@ app.innerHTML = `
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
     <section class="editor-options" aria-label="编辑器设置"><label>编辑字号 <select id="editor-font-size"><option value="14px">14</option><option value="16px" selected>16</option><option value="18px">18</option><option value="20px">20</option></select></label><span id="document-status" role="status">准备就绪</span></section>
     <section class="editor-container">
-      <aside id="explorer" class="explorer" aria-label="资源管理" hidden>
-        <div class="explorer__head"><span>资源管理 <span id="explorer-scope" class="explorer__scope"></span></span><button id="explorer-refresh" type="button" title="刷新目录树" class="explorer__refresh">⟳</button></div>
-        <div id="explorer-tree" class="tree" role="tree"></div>
-        <div id="explorer-preview" class="explorer__preview" hidden></div>
-      </aside>
-      <div id="workbench" class="workbench"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
+      <div id="workbench" class="workbench">
+        <aside id="explorer" class="explorer" aria-label="资源管理" hidden>
+          <div class="explorer__head"><span>资源管理 <span id="explorer-scope" class="explorer__scope"></span></span><button id="explorer-refresh" type="button" title="刷新目录树" class="explorer__refresh">⟳</button></div>
+          <div id="explorer-tree" class="tree" role="tree"></div>
+          <div id="explorer-preview" class="explorer__preview" hidden></div>
+        </aside>
+        <div class="editor-pane"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
+      </div>
       <div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div>
     </section>
     <div id="confirm-scrim" class="confirm-scrim" role="presentation">
@@ -628,13 +630,17 @@ async function renderExplorerTree(): Promise<void> {
   }
   explorerPanel.hidden = false;
   explorerScope.textContent = "作用域：文档目录及其父目录";
-  const rootRow = buildTreeRow({ name: getDocumentLabel(state().path) ?? "文档目录", isDir: true, size: 0, isSupportedAsset: false }, ".", expandedDirs.has("."));
+  // 中文：根行语义 = 文档所在目录（不是文档文件本身）；展开后第一层列出目录内条目。
+  // English: The root row is the document's directory (not the document file); expanding lists
+  //       that directory's entries.
+  const rootName = baseDir.split(/[\\/]/).filter(Boolean).pop() ?? "文档目录";
+  const rootRow = buildTreeRow({ name: rootName, isDir: true, size: 0, isSupportedAsset: false }, ".", expandedDirs.has("."));
   rootRow.classList.add("tree__row--active");
   explorerTree.appendChild(rootRow);
   if (!expandedDirs.has(".")) {
     const hint = document.createElement("div");
     hint.className = "tree__empty";
-    hint.textContent = "展开目录以浏览资源";
+    hint.textContent = "点行首按钮展开目录";
     explorerTree.appendChild(hint);
     return;
   }
