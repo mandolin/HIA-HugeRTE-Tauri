@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, isSupportedHtmlPath } from "./document";
+import { buildDiscardConfirmMessage, createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, isSupportedHtmlPath } from "./document";
 
 describe("文档状态", () => {
   it("新建文档默认是未保存且未修改的 UTF-8 HTML", () => {
     const document = createNewDocument();
     expect(document.path).toBeNull();
     expect(document.dirty).toBe(false);
-    expect(document.content).toContain("charset=`utf-8`");
+    expect(document.content).toContain('charset="utf-8"');
   });
 
   it("仅接受 htm 和 html 扩展名，且忽略大小写", () => {
@@ -18,6 +18,13 @@ describe("文档状态", () => {
   it("为没有受支持扩展名的另存为路径补充 html", () => {
     expect(ensureHtmlExtension("K:\\docs\\new-file")).toBe("K:\\docs\\new-file.html");
     expect(ensureHtmlExtension("K:\\docs\\old.htm")).toBe("K:\\docs\\old.htm");
+  });
+
+  it("放弃修改确认文案区分已保存路径与未命名文档", () => {
+    expect(buildDiscardConfirmMessage("K:\\docs\\sample.html")).toContain("sample.html");
+    expect(buildDiscardConfirmMessage("K:\\docs\\sample.html")).not.toContain("尚未保存到任何文件");
+    expect(buildDiscardConfirmMessage(null)).toContain("未命名文档");
+    expect(buildDiscardConfirmMessage(null)).toContain("尚未保存到任何文件");
   });
 
   it("从载荷恢复干净文档并显示文件名", () => {

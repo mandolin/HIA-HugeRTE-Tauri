@@ -68,7 +68,12 @@ async function pasteIntoEditor(editor: Editor, mode: "html" | "text"): Promise<v
     }
     const text = clipboard ? await clipboard.readText() : "";
     if (text) {
-      insertClipboardHtml(editor, mode === "text" ? textToHtml(text) : textToHtml(text));
+      // 中文：走到这里说明剪贴板只有纯文本（或 html 模式未取到 text/html）；无论哪种模式，
+      //       纯文本都必须转义后再插入，避免把用户文本当作标记解析。
+      // English: Reaching here means the clipboard holds plain text only (or html mode found no
+      //       text/html item); in either mode the plain text must be escaped before insertion so
+      //       user text is never parsed as markup.
+      insertClipboardHtml(editor, textToHtml(text));
       return;
     }
   } catch {

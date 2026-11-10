@@ -18,11 +18,28 @@ export interface DocumentPayload {
 /** 创建一个尚未保存的 HTML 文档状态。 */
 export function createNewDocument(): DocumentState {
   return {
-    content: "<!doctype html>\n<html>\n<head>\n  <meta charset=`utf-8` />\n  <title>未命名文档</title>\n</head>\n<body>\n  <p></p>\n</body>\n</html>\n",
+    content: "<!doctype html>\n<html>\n<head>\n  <meta charset=\"utf-8\" />\n  <title>未命名文档</title>\n</head>\n<body>\n  <p></p>\n</body>\n</html>\n",
     path: null,
     dirty: false,
     baseDir: null
   };
+}
+
+/**
+ * @lang zh-CN
+ * 生成「放弃未保存修改」确认模态的正文文案：区分已有保存路径的文档与未命名文档，
+ * 未命名文档额外提示尚未落盘并指引先保存。供界面模态与测试共用（DEF-1 方案 B）。
+ * @lang en
+ * Build the body copy for the discard-changes confirmation modal: distinguish documents that
+ * already have a save path from untitled ones; the untitled variant additionally notes that
+ * nothing has been written to disk yet and points to saving first. Shared by the UI modal and
+ * tests (DEF-1 option B).
+ */
+export function buildDiscardConfirmMessage(path: string | null): string {
+  if (!path) {
+    return "当前文档 未命名文档 有尚未保存的修改（尚未保存到任何文件）。继续操作将放弃这些修改，且无法撤销。若需保留，请先取消并使用「保存」或「另存为」。";
+  }
+  return `当前文档 ${getDocumentLabel(path)} 有尚未保存的修改。继续操作将放弃这些修改，且无法撤销。`;
 }
 
 /** 将已读取的本地文档转换为干净的编辑状态。 */
