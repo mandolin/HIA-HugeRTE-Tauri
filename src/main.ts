@@ -42,6 +42,7 @@ app.innerHTML = `
         <button id="save-document" type="button" title="保存当前文档">保存</button>
         <button id="save-as-document" type="button" title="另存为 HTML 文件">另存为</button>
         <button id="history-button" type="button" title="最近打开的文件">历史 ▾</button>
+        <button id="explorer-toggle" type="button" title="显示/隐藏目录树" aria-pressed="false">显示目录树</button>
       </nav>
     </header>
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
@@ -50,9 +51,14 @@ app.innerHTML = `
       <div id="workbench" class="workbench">
         <aside id="explorer" class="explorer" aria-label="资源管理" hidden>
           <div class="explorer__head"><span>资源管理 <span id="explorer-scope" class="explorer__scope"></span></span><button id="explorer-refresh" type="button" title="刷新目录树" class="explorer__refresh">⟳</button></div>
+          <div class="explorer__breadcrumb-row">
+            <button id="explorer-up" type="button" title="向上（浏览上一级目录）" class="explorer__up" aria-label="向上">↑</button>
+            <nav id="explorer-breadcrumb" class="explorer__breadcrumb" aria-label="目录路径"></nav>
+          </div>
           <div id="explorer-tree" class="tree" role="tree"></div>
           <div id="explorer-preview" class="explorer__preview" hidden></div>
         </aside>
+        <div id="explorer-resizer" class="explorer__resizer" role="separator" aria-orientation="vertical" aria-label="调整资源管理器宽度" title="拖动调整资源管理器宽度（聚焦后可用左右方向键微调）" tabindex="0" hidden></div>
         <div class="editor-pane"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
       </div>
       <div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div>
@@ -80,6 +86,11 @@ const explorerPanel = requiredElement<HTMLElement>("#explorer");
 const explorerTree = requiredElement<HTMLDivElement>("#explorer-tree");
 const explorerScope = requiredElement<HTMLSpanElement>("#explorer-scope");
 const explorerPreview = requiredElement<HTMLDivElement>("#explorer-preview");
+const explorerBreadcrumb = requiredElement<HTMLElement>("#explorer-breadcrumb");
+const explorerUpButton = requiredElement<HTMLButtonElement>("#explorer-up");
+const explorerResizer = requiredElement<HTMLDivElement>("#explorer-resizer");
+const explorerToggleButton = requiredElement<HTMLButtonElement>("#explorer-toggle");
+const workbench = requiredElement<HTMLElement>("#workbench");
 const confirmScrim = requiredElement<HTMLDivElement>("#confirm-scrim");
 const confirmMessage = requiredElement<HTMLParagraphElement>("#confirm-message");
 const confirmCancelButton = requiredElement<HTMLButtonElement>("#confirm-cancel");
@@ -309,10 +320,27 @@ async function replaceDocument(nextState: DocumentState): Promise<void> {
   await applyDocumentToEditor(nextState);
   isReplacingContent = false;
   refreshDocumentHeader();
-  expandedDirs.clear();
-  expandedDirs.add(".");
-  selectedTreePath = null;
+  resetExplorerFor(nextState);
   await renderExplorerTree();
+}
+
+/**
+ * @lang zh-CN
+ * 文档切换时复位资源树：浏览目录回到新文档所在目录、清空展开与选中。浏览目录在无文档
+ * （baseDir 为空）时留空，侧栏随之隐藏。
+ * @lang en
+ * Reset the explorer on document change: the browsing directory returns to the new document's
+ * directory, with expansion and selection cleared. With no document (empty baseDir) the browsing
+ * directory stays empty and the sidebar hides.
+ */
+function resetExplorerFor(documentState: DocumentState): void {
+  // 中文：baseDir 是 Rust canonicalize 的结果（带 `\\?\` 前缀），先归一化再用于面包屑与路径拼接。
+  // English: baseDir is Rust's canonicalized result (with the `\\?\` prefix); normalize it before
+  //       it feeds the breadcrumb and path joining.
+  explorerRootPath = documentState.baseDir ? normalizeWindowsPath(documentState.baseDir) : "";
+  expandedDirs.clear();
+  if (explorerRootPath) expandedDirs.add(explorerRootPath);
+  selectedTreePath = null;
 }
 
 /**
@@ -338,9 +366,7 @@ async function switchToTab(index: number): Promise<void> {
   isReplacingContent = false;
   refreshDocumentHeader();
   applyEditorFontSize();
-  expandedDirs.clear();
-  expandedDirs.add(".");
-  selectedTreePath = null;
+  resetExplorerFor(state());
   await renderExplorerTree();
   setStatus("已切换标签页");
 }
@@ -607,46 +633,334 @@ interface RecentFileEntryPayload { path: string; openedAt: string; }
 /** @lang zh-CN 「不记录模式」开关（ADR-0004 第 3 条）：开启后不写新记录也不删除旧记录。 / @lang EN "No-record mode" (ADR-0004 §3): when on, neither new records are written nor old ones removed. */
 let historyDisabled = localStorage.getItem("hia-hugerte.history-disabled") === "1";
 
-/** @lang zh-CN 已展开目录的相对路径集合（会话内状态；文档切换时重置）。 / @lang en Relative paths of expanded directories (session state; reset when the document changes). */
+/** @lang zh-CN 已展开文件夹的**绝对路径**集合（文档切换或浏览目录变化时重置为当前根）。 / @lang en Set of expanded folders by **absolute path** (reset to the current root when the document or browsing directory changes). */
 const expandedDirs = new Set<string>();
 
 /**
  * @lang zh-CN
- * 渲染资源树（ADR-0003 + 设计基线 v1.1）：根行 = 文档目录；子行懒加载——目录行的行首是
- * **真实展开/收缩按钮**（维护者修订：可键盘到达，Enter/Space 切换），文件行点击图片/样式
- * 时在预览卡显示相对引用与「插入相对引用」。无文档或读取失败显示空态文案。
+ * 资源树当前浏览目录（绝对路径），初始为打开文档所在目录。面包屑与「向上」按钮直接修改它，
+ * 与 Windows 资源管理器一致（ADR-0003 修订版）。
  * @lang en
- * Render the explorer tree (ADR-0003 + design baseline v1.1): root row = document directory;
- * children lazy-load. Directory rows start with a real expand/collapse button (maintainer
- * revision: keyboard-reachable via Enter/Space); clicking an image/style shows the preview card
- * with its relative reference and an "insert reference" action. Empty state when no document or
- * on read failure.
+ * The explorer's current browsing directory (absolute path), initially the opened document's
+ * directory. The breadcrumb and Up button modify it directly, matching Windows Explorer
+ * (ADR-0003 revised).
+ */
+let explorerRootPath = "";
+
+/**
+ * @lang zh-CN
+ * 用户对目录树的显隐选择（维护者 2026-11-10 需求：右上切换按钮）。持久化到 localStorage
+ * 落实 ADR-0003 第 6 条「折叠状态记入用户数据」——与历史「不记录模式」同一机制，随
+ * WebView2 用户数据目录持久化；仅表达用户意愿，「有无文档」仍由浏览目录决定。
+ * @lang en
+ * The user's show/hide choice for the tree (maintainer request 2026-11-10: the top-right toggle).
+ * Persisted to localStorage to honour ADR-0003 §6 "collapse state goes into user data" — the same
+ * mechanism as the history no-record switch, persisted via the WebView2 user-data folder. It only
+ * carries user intent; whether a document exists is still decided by the browsing directory.
+ */
+let explorerHiddenByUser = localStorage.getItem("hia-hugerte.explorer-hidden") === "1";
+
+/** @lang zh-CN 侧栏宽度边界与默认值（px）：170 保证「向上」按钮与面包屑可读；520 之外编辑区已不可用。 / @lang en Sidebar width bounds and default (px): 170 keeps the Up button and breadcrumb readable; beyond 520 the editor is unusable. */
+const EXPLORER_MIN_WIDTH = 170;
+const EXPLORER_MAX_WIDTH = 520;
+const EXPLORER_DEFAULT_WIDTH = 260;
+
+/** @lang zh-CN 拖拽中的会话状态：pointerId、起点横坐标与起始宽度（pointer capture 下移动事件持续到达）。 / @lang en In-drag session state: pointerId, start X and start width (move events keep arriving under pointer capture). */
+let explorerResizeDrag: { pointerId: number; startX: number; startWidth: number } | null = null;
+
+/** @lang zh-CN 持久化的侧栏宽度（非法或缺失时回退默认 260）。 / @lang en The persisted sidebar width (falls back to the 260 default when missing or invalid). */
+const storedExplorerWidth = Number(localStorage.getItem("hia-hugerte.explorer-width"));
+let explorerWidth = Number.isFinite(storedExplorerWidth) && storedExplorerWidth >= EXPLORER_MIN_WIDTH ? storedExplorerWidth : EXPLORER_DEFAULT_WIDTH;
+
+/**
+ * @lang zh-CN
+ * 把侧栏宽度夹进合法区间：固定 [170, 520] 再叠加动态上限「工作台宽 − 280」，保证编辑区
+ * 始终保留约 280px；窗口极窄时下限优先（侧栏不会被夹成 0）。
+ * @lang en
+ * Clamp the sidebar width into its legal range: the fixed [170, 520] plus the dynamic cap
+ * "workbench width − 280" so the editor always keeps roughly 280px; on very narrow windows the
+ * floor wins (the sidebar never collapses to zero).
+ */
+function clampExplorerWidth(width: number): number {
+  const dynamicMax = Math.max(EXPLORER_MIN_WIDTH, Math.min(EXPLORER_MAX_WIDTH, workbench.clientWidth - 280));
+  return Math.min(dynamicMax, Math.max(EXPLORER_MIN_WIDTH, Math.round(width)));
+}
+
+/**
+ * @lang zh-CN
+ * 把当前宽度应用到侧栏布局并同步分隔条 separator 的 ARIA 值域；持久化由拖拽/键盘调整结束时
+ * 统一写入 localStorage，避免拖拽期间每个 move 事件都落盘。
+ * @lang en
+ * Apply the current width to the sidebar layout and sync the resizer separator's ARIA range;
+ * persistence is written once when a drag/keyboard adjustment ends, not on every move event.
+ */
+function applyExplorerWidth(): void {
+  explorerPanel.style.flex = `0 0 ${explorerWidth}px`;
+  explorerResizer.setAttribute("aria-valuemin", String(EXPLORER_MIN_WIDTH));
+  explorerResizer.setAttribute("aria-valuemax", String(EXPLORER_MAX_WIDTH));
+  explorerResizer.setAttribute("aria-valuenow", String(explorerWidth));
+}
+
+/**
+ * @lang zh-CN
+ * 同步「侧栏 / 分隔条 / 右上切换按钮」三者的显隐一致状态：浏览目录为空（无文档）时侧栏与
+ * 分隔条隐藏、按钮禁用；用户手动隐藏优先于「有文档即显示」。按钮文案表达它将执行的动作。
+ * @lang en
+ * Keep the sidebar, resizer and top-right toggle mutually consistent: with an empty browsing
+ * directory (no document) the sidebar and resizer hide and the button disables; a manual hide
+ * outweighs "show when a document is open". The button label states the action it will perform.
+ */
+function updateExplorerVisibility(): void {
+  const shouldShow = explorerRootPath !== "" && !explorerHiddenByUser;
+  explorerPanel.hidden = !shouldShow;
+  explorerResizer.hidden = !shouldShow;
+  explorerToggleButton.disabled = explorerRootPath === "";
+  explorerToggleButton.textContent = shouldShow ? "隐藏目录树" : "显示目录树";
+  explorerToggleButton.setAttribute("aria-pressed", String(shouldShow));
+}
+
+/**
+ * @lang zh-CN
+ * 渲染资源树（ADR-0003 修订版 + 设计基线 v1.3）：模型为**绝对路径导航**，与 Windows 资源
+ * 管理器一致。树以当前浏览目录为根，子行懒加载；目录行首是真实展开/收缩按钮（键盘可达），
+ * 文件行单击选中、双击打开。面包屑与「向上」按钮直接改浏览目录；无文档时不显示侧栏。
+ * @lang en
+ * Render the explorer tree (ADR-0003 revised + design baseline v1.3): the model is **absolute
+ * path navigation**, matching Windows Explorer. The tree is rooted at the current browsing
+ * directory with lazily loaded children; directory rows carry a real expand/collapse button
+ * (keyboard-reachable), files select on click and open on double click. The breadcrumb and the
+ * Up button change the browsing directory directly; the sidebar hides when no document is open.
  */
 async function renderExplorerTree(): Promise<void> {
   explorerTree.textContent = "";
   explorerPreview.hidden = true;
   const baseDir = state().baseDir;
   if (!baseDir) {
-    explorerPanel.hidden = true;
+    updateExplorerVisibility();
     return;
   }
-  explorerPanel.hidden = false;
-  explorerScope.textContent = "作用域：文档目录及其父目录";
-  // 中文：根行语义 = 文档所在目录（不是文档文件本身）；展开后第一层列出目录内条目。
-  // English: The root row is the document's directory (not the document file); expanding lists
-  //       that directory's entries.
-  const rootName = baseDir.split(/[\\/]/).filter(Boolean).pop() ?? "文档目录";
-  const rootRow = buildTreeRow({ name: rootName, isDir: true, size: 0, isSupportedAsset: false }, ".", expandedDirs.has("."));
+  updateExplorerVisibility();
+  explorerScope.textContent = "浏览：可逐级导航（文档内容引用仍限于文档目录作用域）";
+  renderBreadcrumb();
+  const rootRow = buildTreeRow(
+    { name: pathLeafName(explorerRootPath), isDir: true, size: 0, isSupportedAsset: false },
+    explorerRootPath,
+    expandedDirs.has(explorerRootPath)
+  );
   rootRow.classList.add("tree__row--active");
   explorerTree.appendChild(rootRow);
-  if (!expandedDirs.has(".")) {
+  if (!expandedDirs.has(explorerRootPath)) {
     const hint = document.createElement("div");
     hint.className = "tree__empty";
     hint.textContent = "点行首按钮展开目录";
     explorerTree.appendChild(hint);
     return;
   }
-  await appendTreeChildren(explorerTree, baseDir, ".", 1);
+  await appendTreeChildren(explorerTree, explorerRootPath, 1);
+}
+
+/** @lang zh-CN 取路径末段名（盘符根回退为盘符本身，如 "C:\" → "C:"）。 / @lang en Last path segment (drive roots fall back to the drive itself, e.g. "C:\" → "C:"). */
+function pathLeafName(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/[\\/]+$/, "");
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : absolutePath;
+}
+
+/**
+ * @lang zh-CN
+ * 计算从 `fromDir` 到 `targetPath` 的相对引用路径（以反斜杠分隔、`..` 逐级上溯），
+ * 供"插入相对引用"使用；两者不在同一盘符时退回绝对路径（无法用相对引用表达）。
+ * @lang en
+ * Compute the relative reference path from `fromDir` to `targetPath` (backslash-separated,
+ * `..` per level) for "insert reference"; when they are on different drives it falls back to the
+ * absolute path (no relative form exists).
+ */
+function relativePathFrom(fromDir: string, targetPath: string): string {
+  const splitParts = (value: string) => value.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+  const fromParts = splitParts(fromDir);
+  const targetParts = splitParts(targetPath);
+  // 中文：首段是盘符；不同盘符直接返回绝对路径。
+  // English: The first segment is the drive; different drives return the absolute path.
+  if (fromParts[0]?.toLowerCase() !== targetParts[0]?.toLowerCase()) return targetPath;
+  let common = 0;
+  while (common < fromParts.length && common < targetParts.length - 1 && fromParts[common].toLowerCase() === targetParts[common].toLowerCase()) {
+    common += 1;
+  }
+  const ups = fromParts.length - common;
+  const rest = targetParts.slice(common);
+  return [...Array(ups).fill(".."), ...rest].join("/") || ".";
+}
+
+/**
+ * @lang zh-CN
+ * 归一化 Windows 路径：去掉 canonicalize 产生的 `\\?\` 扩展长度前缀与多余的尾部分隔符。
+ * 该前缀是 Rust 侧内部形态，仅对文件系统 API 有意义；面包屑与路径拼接需要常规 `C:\...` 形式。
+ * @lang en
+ * Normalize a Windows path: strip the `\\?\` extended-length prefix produced by canonicalize and
+ * trailing separators. That prefix is an internal Rust-side shape meaningful only to filesystem
+ * APIs; breadcrumb rendering and path joining need the ordinary `C:\...` form.
+ */
+function normalizeWindowsPath(value: string): string {
+  let normalized = value.replace(/^\\\\\?\\/, "");
+  // 中文：UNC 的扩展形式（\\?\UNC\server\share）还原为 \\server\share。
+  // English: Restore the UNC extended form (\\?\UNC\server\share) to \\server\share.
+  if (/^UNC\\/i.test(normalized)) normalized = `\\\\${normalized.slice(4)}`;
+  return normalized.replace(/[\\/]+$/, "");
+}
+
+/** @lang zh-CN 取父目录路径；已在盘符根时返回 null（向上按钮据此禁用）。 / @lang en Parent path, or null at a drive root (the Up button disables on null). */
+function parentPath(absolutePath: string): string | null {
+  const trimmed = absolutePath.replace(/[\\/]+$/, "");
+  // 中文：盘符根（C: 或 C:\）没有可上的父级。
+  // English: A drive root (C: or C:\) has no parent to ascend to.
+  if (/^[A-Za-z]:$/.test(trimmed)) return null;
+  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  if (index < 0) return null;
+  const parent = trimmed.slice(0, index);
+  return parent === "" ? null : parent.endsWith(":") ? `${parent}\\` : parent;
+}
+
+/**
+ * @lang zh-CN
+ * 把绝对路径拆成面包屑段：`🖥 › C: › Users › admin › …`，每段携带其完整路径。
+ * @lang en
+ * Split an absolute path into breadcrumb segments: `🖥 › C: › Users › admin › …`, each carrying
+ * its full path.
+ */
+function splitBreadcrumb(absolutePath: string): Array<{ name: string; path: string }> {
+  const normalized = absolutePath.replace(/[\\/]+$/, "");
+  const driveMatch = normalized.match(/^([A-Za-z]:)(.*)$/);
+  if (!driveMatch) return [{ name: absolutePath, path: absolutePath }];
+  const segments: Array<{ name: string; path: string }> = [{ name: driveMatch[1], path: `${driveMatch[1]}\\` }];
+  let current = driveMatch[1];
+  for (const part of driveMatch[2].split(/[\\/]/).filter(Boolean)) {
+    current = `${current}\\${part}`;
+    segments.push({ name: part, path: current });
+  }
+  return segments;
+}
+
+/**
+ * @lang zh-CN
+ * 渲染仿 Win11 资源管理器面包屑（维护者 2026-11-10 需求）：每段**可点击**（该段即变成浏览目录），
+ * 并带**下拉箭头**——点击箭头列出该段的同级文件夹（Win11 行为）以便横向跳转；当前浏览目录段
+ * 为选中态且不带下拉。同时维护「向上」按钮：到达盘符根时禁用。
+ * @lang en
+ * Render the Win11-Explorer-style breadcrumb (maintainer request 2026-11-10): every segment is
+ * **clickable** (it becomes the browsing directory) and carries a **dropdown arrow** — clicking
+ * the arrow lists that segment's sibling folders (Win11 behaviour) for lateral jumps; the current
+ * browsing segment is marked current and has no dropdown. The Up button disables at a drive root.
+ */
+function renderBreadcrumb(): void {
+  explorerBreadcrumb.textContent = "";
+  const device = document.createElement("span");
+  device.className = "explorer__crumb-device";
+  // 中文：设备段用文字"此电脑"（对齐中文版 Win11；emoji 🖥 在中文系统字体栈下会渲染成方块）。
+  // English: The device segment shows "此电脑" (matching Chinese Windows 11; the 🖥 emoji renders as a
+  //       tofu box under the CJK system font stack).
+  device.textContent = "此电脑";
+  explorerBreadcrumb.appendChild(device);
+  const segments = splitBreadcrumb(explorerRootPath);
+  segments.forEach((segment) => {
+    const isCurrent = segment.path.replace(/[\\/]+$/, "") === explorerRootPath.replace(/[\\/]+$/, "");
+    const item = document.createElement("span");
+    item.className = `explorer__crumb-item${isCurrent ? " explorer__crumb-item--current" : ""}`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "explorer__crumb";
+    button.textContent = segment.name;
+    button.title = segment.path;
+    button.addEventListener("click", () => { void setExplorerRoot(segment.path); });
+    item.appendChild(button);
+    if (!isCurrent) {
+      // 中文：下拉箭头——列出该段所在目录的兄弟文件夹（Win11 的下拉行为）。
+      // English: The dropdown arrow lists sibling folders of that segment's parent (Win11 behaviour).
+      const caret = document.createElement("button");
+      caret.type = "button";
+      caret.className = "explorer__crumb-caret";
+      caret.textContent = "▾";
+      caret.title = "显示同级文件夹";
+      caret.addEventListener("click", (event) => { event.stopPropagation(); void openCrumbDropdown(caret, segment.path); });
+      item.appendChild(caret);
+    }
+    explorerBreadcrumb.appendChild(item);
+  });
+  explorerUpButton.disabled = parentPath(explorerRootPath) === null;
+  // 中文：地址栏内容可能超宽——渲染后把当前段（最右）滚入视野，对齐 Win11 导航后的定位行为。
+  // English: The bar can overflow — after rendering, scroll the current (rightmost) segment into
+  //       view, matching Win11's post-navigation positioning.
+  explorerBreadcrumb.scrollLeft = explorerBreadcrumb.scrollWidth;
+}
+
+/**
+ * @lang zh-CN
+ * 面包屑段的下拉：列出该段父目录下的所有文件夹（Win11 用下拉做横向跳转）。点击条目即把该
+ * 文件夹设为浏览目录；点击其他地方或再次点击箭头关闭。
+ * @lang en
+ * Breadcrumb-segment dropdown: lists every folder under that segment's parent (Win11 uses the
+ * dropdown for lateral jumps). Clicking an entry makes it the browsing directory; clicking
+ * elsewhere or the arrow again closes it.
+ */
+async function openCrumbDropdown(anchor: HTMLElement, segmentPath: string): Promise<void> {
+  document.querySelector(".explorer__dropdown")?.remove();
+  const parent = parentPath(segmentPath) ?? segmentPath;
+  let entries: TreeEntryPayload[] = [];
+  try {
+    entries = await invoke<TreeEntryPayload[]>("list_directory_tree", { absolutePath: parent });
+  } catch {
+    entries = [];
+  }
+  const folders = entries.filter((entry) => entry.isDir);
+  const menu = document.createElement("div");
+  menu.className = "explorer__dropdown";
+  if (folders.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "explorer__dropdown-empty";
+    empty.textContent = "（无同级文件夹）";
+    menu.appendChild(empty);
+  }
+  for (const folder of folders) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "explorer__dropdown-item" + (folder.name === pathLeafName(segmentPath) ? " explorer__dropdown-item--active" : "");
+    item.textContent = `📁 ${folder.name}`;
+    item.addEventListener("click", () => {
+      menu.remove();
+      const next = parent.endsWith("\\") ? `${parent}${folder.name}` : `${parent}\\${folder.name}`;
+      void setExplorerRoot(next);
+    });
+    menu.appendChild(item);
+  }
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.round(rect.left)}px`;
+  menu.style.top = `${Math.round(rect.bottom + 4)}px`;
+  document.body.appendChild(menu);
+  // 中文：点击别处关闭（一次性监听，避免累积）。
+  // English: Close on outside click (one-shot listener, no accumulation).
+  const close = (event: MouseEvent) => {
+    if (!menu.contains(event.target as Node)) {
+      menu.remove();
+      document.removeEventListener("mousedown", close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+}
+
+/**
+ * @lang zh-CN
+ * 切换浏览目录（绝对路径）：重置展开集合与选中项后重绘。目标是已存在的目录才会生效
+ * （Rust 侧同样校验，这里提前避免无谓重绘）。
+ * @lang en
+ * Switch the browsing directory (absolute path): reset expansion and selection, then re-render.
+ * Only existing directories take effect (Rust validates too; this avoids pointless re-renders).
+ */
+async function setExplorerRoot(absolutePath: string): Promise<void> {
+  if (absolutePath === explorerRootPath) return;
+  expandedDirs.clear();
+  expandedDirs.add(absolutePath);
+  explorerRootPath = absolutePath;
+  selectedTreePath = null;
+  await renderExplorerTree();
 }
 
 /**
@@ -656,10 +970,10 @@ async function renderExplorerTree(): Promise<void> {
  * Append one level of child rows for a directory (lazy per level; subdirectories fetch on
  * expand). Read failures render the empty-state text.
  */
-async function appendTreeChildren(container: HTMLElement, baseDir: string, relativePath: string, indent: number): Promise<void> {
+async function appendTreeChildren(container: HTMLElement, directoryPath: string, indent: number): Promise<void> {
   let entries: TreeEntryPayload[] = [];
   try {
-    entries = await invoke<TreeEntryPayload[]>("list_directory_tree", { baseDir, relativePath });
+    entries = await invoke<TreeEntryPayload[]>("list_directory_tree", { absolutePath: directoryPath });
   } catch {
     entries = [];
   }
@@ -671,12 +985,15 @@ async function appendTreeChildren(container: HTMLElement, baseDir: string, relat
     return;
   }
   for (const entry of entries) {
-    const childRelative = relativePath === "." ? entry.name : `${relativePath}/${entry.name}`;
-    const row = buildTreeRow(entry, childRelative, expandedDirs.has(childRelative));
+    // 中文：子行一律用绝对路径标识——与浏览目录模型一致，双击打开、展开状态与预览都无需再换算。
+    // English: Child rows are identified by absolute path — consistent with the browsing-directory
+    //       model, so open-on-double-click, expansion and preview need no further conversion.
+    const childPath = directoryPath.endsWith("\\") ? `${directoryPath}${entry.name}` : `${directoryPath}\\${entry.name}`;
+    const row = buildTreeRow(entry, childPath, expandedDirs.has(childPath));
     row.classList.add(`tree__indent-${Math.min(indent, 3)}`);
     container.appendChild(row);
-    if (entry.isDir && expandedDirs.has(childRelative)) {
-      await appendTreeChildren(container, baseDir, childRelative, indent + 1);
+    if (entry.isDir && expandedDirs.has(childPath)) {
+      await appendTreeChildren(container, childPath, indent + 1);
     }
   }
 }
@@ -694,10 +1011,11 @@ async function appendTreeChildren(container: HTMLElement, baseDir: string, relat
  * keyboard Enter opens the selected row (accessible double-click equivalent). Directory rows keep
  * their real expand/collapse button, independent of selection.
  */
-function buildTreeRow(entry: TreeEntryPayload, relativePath: string, expanded: boolean): HTMLDivElement {
+function buildTreeRow(entry: TreeEntryPayload, entryPath: string, expanded: boolean): HTMLDivElement {
   const row = document.createElement("div");
   row.className = `tree__row${entry.isSupportedAsset ? " tree__row--asset" : ""}`;
-  if (selectedTreePath === relativePath) row.classList.add("tree__row--selected");
+  row.dataset.path = entryPath;
+  if (selectedTreePath === entryPath) row.classList.add("tree__row--selected");
   row.setAttribute("role", "treeitem");
   row.tabIndex = 0;
   if (entry.isDir) {
@@ -707,7 +1025,7 @@ function buildTreeRow(entry: TreeEntryPayload, relativePath: string, expanded: b
     toggle.textContent = expanded ? "▾" : "▸";
     toggle.title = expanded ? "收起目录" : "展开目录";
     toggle.setAttribute("aria-expanded", String(expanded));
-    toggle.addEventListener("click", (event) => { event.stopPropagation(); void toggleExpandDir(relativePath); });
+    toggle.addEventListener("click", (event) => { event.stopPropagation(); void toggleExpandDir(entryPath); });
     row.appendChild(toggle);
   } else {
     const spacer = document.createElement("span");
@@ -726,56 +1044,44 @@ function buildTreeRow(entry: TreeEntryPayload, relativePath: string, expanded: b
   //       double click opens — with both handlers the first click of a double click fires once,
   //       which is the expected select-then-open flow.
   row.addEventListener("click", () => {
-    selectedTreePath = relativePath;
-    if (entry.isSupportedAsset) void showAssetPreview(relativePath);
+    selectedTreePath = entryPath;
+    if (entry.isSupportedAsset) void showAssetPreview(entryPath);
     else explorerPreview.hidden = true;
     renderTreeSelection();
   });
   row.addEventListener("dblclick", () => {
-    if (entry.isDir) { void toggleExpandDir(relativePath); return; }
-    const baseDir = state().baseDir;
-    if (!baseDir) return;
-    const absolute = resolveTreeAbsolutePath(baseDir, relativePath);
-    if (absolute) void openFromPath(absolute);
+    if (entry.isDir) { void toggleExpandDir(entryPath); return; }
+    // 中文：双击文件 = 以绝对路径打开为新 Tab（openFromPath 内含脏确认与历史记录）。
+    // English: Double-click a file opens it in a new tab by absolute path (openFromPath runs the
+    //       dirty confirm and records history).
+    void openFromPath(entryPath);
   });
   row.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      selectedTreePath = relativePath;
+      selectedTreePath = entryPath;
       renderTreeSelection();
-      if (!entry.isDir) {
-        const baseDir = state().baseDir;
-        const absolute = baseDir ? resolveTreeAbsolutePath(baseDir, relativePath) : null;
-        if (absolute) void openFromPath(absolute);
-      }
+      if (!entry.isDir) void openFromPath(entryPath);
     }
   });
   return row;
 }
 
-/** @lang zh-CN 树内当前选中项的相对路径（会话内状态；文档切换时清空）。 / @lang en Relative path of the selected tree entry (session state; cleared when the document changes). */
+/** @lang zh-CN 树内当前选中项的绝对路径（会话内状态；文档切换或浏览目录变化时清空）。 / @lang en Absolute path of the selected tree entry (session state; cleared when the document or browsing directory changes). */
 let selectedTreePath: string | null = null;
 
 /**
  * @lang zh-CN
  * 只更新选中高亮（不整树重绘，避免双击时因重绘吞掉第二次 click 的体验波动）：
- * 清除旧选中行、点亮新选中行。
+ * 按 `data-path` 精确匹配清除旧选中、点亮新选中。
  * @lang en
  * Update only the selection highlight (no full re-render, so the second click of a double click
- * is not swallowed by a repaint): clear the previous selected row and light the new one.
+ * is not swallowed by a repaint): clear and light rows by exact `data-path` match.
  */
 function renderTreeSelection(): void {
-  const rows = explorerTree.querySelectorAll(".tree__row--selected");
-  rows.forEach((row) => row.classList.remove("tree__row--selected"));
+  explorerTree.querySelectorAll(".tree__row--selected").forEach((row) => row.classList.remove("tree__row--selected"));
   if (selectedTreePath === null) return;
-  // 中文：行的相对路径不写进 DOM 属性，按行内文件名文本匹配即可（同层同名不出现——文件系统保证）。
-  // English: Row relative paths are not stored in DOM attributes; matching by the row's file-name
-  //       text suffices (same-level duplicates are impossible on a filesystem).
-  const lastName = selectedTreePath.split("/").pop();
-  for (const row of Array.from(explorerTree.querySelectorAll(".tree__row"))) {
-    const nameSpan = row.querySelector("span:last-child");
-    if (nameSpan?.textContent === lastName) { row.classList.add("tree__row--selected"); break; }
-  }
+  explorerTree.querySelector(`.tree__row[data-path="${CSS.escape(selectedTreePath)}"]`)?.classList.add("tree__row--selected");
 }
 
 /**
@@ -787,23 +1093,6 @@ function renderTreeSelection(): void {
  * unlike asset resolution which allows ../; opening needs the full path for open_document_path
  * validation).
  */
-function resolveTreeAbsolutePath(baseDir: string, relativePath: string): string | null {
-  if (relativePath === ".") return null;
-  const normalized = baseDir.replace(/[\\/]+$/, "");
-  const parts = relativePath.split("/");
-  let current = normalized;
-  for (const part of parts) {
-    if (part === "..") {
-      const parent = current.replace(/[\\/][^\\/]+$/, "");
-      if (parent === current) return null;
-      current = parent;
-    } else if (part !== ".") {
-      current = `${current}\\${part}`;
-    }
-  }
-  return current;
-}
-
 /**
  * @lang zh-CN
  * 展开/收缩一个目录：更新集合后整树重绘（数据量小，重绘简单可靠且保持展开状态）。
@@ -811,24 +1100,29 @@ function resolveTreeAbsolutePath(baseDir: string, relativePath: string): string 
  * Expand or collapse one directory: update the set and re-render the whole tree (small data;
  * re-render is simple, reliable and preserves expansion state).
  */
-async function toggleExpandDir(relativePath: string): Promise<void> {
-  if (expandedDirs.has(relativePath)) expandedDirs.delete(relativePath);
-  else expandedDirs.add(relativePath);
+async function toggleExpandDir(entryPath: string): Promise<void> {
+  if (expandedDirs.has(entryPath)) expandedDirs.delete(entryPath);
+  else expandedDirs.add(entryPath);
   await renderExplorerTree();
 }
 
 /**
  * @lang zh-CN
- * 资源预览卡：显示名称、相对引用（以活动文档目录为基准）与大小；「插入相对引用」按钮把
- * 最短相对路径插入编辑器（convert_urls:false 契约下由 HugeRTE 原样保留）。
+ * 资源预览卡（绝对路径入参）：显示名称、**相对活动文档目录的引用路径**与大小；「插入相对
+ * 引用」把该相对路径插入编辑器（convert_urls:false 契约下由 HugeRTE 原样保留）。
+ * 注意：预览读取走 `resolve_document_asset`，仍受文档目录作用域约束——作用域外的资源
+ * 可在树中看到但预览为空（ADR-0003 修订版第 4 条）。
  * @lang en
- * Asset preview card: name, relative reference (against the active document's directory) and
- * size; "insert reference" places the shortest relative path into the editor (kept verbatim
- * under the convert_urls:false contract).
+ * Asset preview card (absolute path input): name, the **path relative to the active document's
+ * directory**, and size; "insert reference" places that relative path into the editor (kept
+ * verbatim under the convert_urls:false contract). Note: the preview read goes through
+ * `resolve_document_asset` and stays bound by the document-directory scope — assets outside it
+ * are visible in the tree but preview empty (ADR-0003 revised, §4).
  */
-async function showAssetPreview(relativePath: string): Promise<void> {
+async function showAssetPreview(absolutePath: string): Promise<void> {
   const baseDir = state().baseDir;
   if (!baseDir) return;
+  const relativePath = relativePathFrom(baseDir, absolutePath);
   try {
     const dataUri = await invoke<string | null>("resolve_document_asset", { baseDir, relativePath });
     if (!dataUri) return;
@@ -836,7 +1130,7 @@ async function showAssetPreview(relativePath: string): Promise<void> {
     explorerPreview.hidden = false;
     explorerPreview.textContent = "";
     const title = document.createElement("b");
-    title.textContent = relativePath.split("/").pop() ?? relativePath;
+    title.textContent = pathLeafName(absolutePath);
     const ref = document.createElement("div");
     ref.className = "explorer__ref";
     ref.textContent = `相对引用：${relativePath} · 约 ${size} KB`;
@@ -893,6 +1187,80 @@ requiredElement<HTMLButtonElement>("#open-document").addEventListener("click", (
 requiredElement<HTMLButtonElement>("#save-document").addEventListener("click", () => void saveDocument(false));
 requiredElement<HTMLButtonElement>("#save-as-document").addEventListener("click", () => void saveDocument(true));
 requiredElement<HTMLButtonElement>("#history-button").addEventListener("click", () => void toggleHistoryMenu());
+explorerUpButton.addEventListener("click", () => {
+  const parent = parentPath(explorerRootPath);
+  if (parent) void setExplorerRoot(parent);
+});
+// 中文：右上切换按钮——翻转显隐意愿并持久化（见 explorerHiddenByUser 的 ADR-0003 第 6 条说明）。
+// English: The top-right toggle — flips the show/hide intent and persists it (see the
+//       ADR-0003 §6 note on explorerHiddenByUser).
+explorerToggleButton.addEventListener("click", () => {
+  explorerHiddenByUser = !explorerHiddenByUser;
+  localStorage.setItem("hia-hugerte.explorer-hidden", explorerHiddenByUser ? "1" : "0");
+  updateExplorerVisibility();
+});
+// 中文：地址栏鼠标滚轮横向滚动——纵向增量转为 scrollLeft；触控板与 shift+滚轮的 deltaX 走原生
+//       路径不动，无横向溢出时不拦截事件（维护者 2026-11-10 反馈：地址栏超长无法滚动）。
+// English: Wheel-to-horizontal scrolling for the address bar — the vertical delta maps onto
+//       scrollLeft; touchpad and shift+wheel deltaX keep the native path, and with no horizontal
+//       overflow the event is not intercepted (maintainer feedback 2026-11-10: an overlong
+//       address bar could not be scrolled).
+explorerBreadcrumb.addEventListener("wheel", (event) => {
+  if (event.deltaY === 0 || explorerBreadcrumb.scrollWidth <= explorerBreadcrumb.clientWidth) return;
+  event.preventDefault();
+  explorerBreadcrumb.scrollLeft += event.deltaY;
+}, { passive: false });
+// 中文：拖拽分隔条调整侧栏宽度（维护者 2026-11-10 需求）：pointerdown 记录起点并捕获指针，
+//       指针移出 6px 条后拖拽继续；pointerup 才把最终宽度写入 localStorage。
+// English: Drag the resizer to set the sidebar width (maintainer request 2026-11-10):
+//       pointerdown records the origin and captures the pointer so dragging continues after the
+//       pointer leaves the 6px strip; pointerup writes the final width to localStorage.
+explorerResizer.addEventListener("pointerdown", (event) => {
+  if (explorerResizer.hidden) return;
+  explorerResizeDrag = { pointerId: event.pointerId, startX: event.clientX, startWidth: explorerWidth };
+  explorerResizer.setPointerCapture(event.pointerId);
+  document.body.classList.add("explorer-resizing");
+});
+explorerResizer.addEventListener("pointermove", (event) => {
+  if (!explorerResizeDrag || event.pointerId !== explorerResizeDrag.pointerId) return;
+  explorerWidth = clampExplorerWidth(explorerResizeDrag.startWidth + (event.clientX - explorerResizeDrag.startX));
+  applyExplorerWidth();
+});
+const endExplorerResize = (event: PointerEvent): void => {
+  if (!explorerResizeDrag || event.pointerId !== explorerResizeDrag.pointerId) return;
+  explorerResizeDrag = null;
+  document.body.classList.remove("explorer-resizing");
+  localStorage.setItem("hia-hugerte.explorer-width", String(explorerWidth));
+};
+explorerResizer.addEventListener("pointerup", endExplorerResize);
+explorerResizer.addEventListener("pointercancel", endExplorerResize);
+explorerResizer.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  // 中文：分隔条键盘可达（与树内按钮同一可及性基线）：方向键按 16px 微调，右=变宽、左=变窄。
+  // English: The resizer is keyboard-reachable (same accessibility bar as the in-tree buttons):
+  //       arrow keys adjust by 16px — Right widens, Left narrows.
+  event.preventDefault();
+  explorerWidth = clampExplorerWidth(explorerWidth + (event.key === "ArrowRight" ? 16 : -16));
+  applyExplorerWidth();
+  localStorage.setItem("hia-hugerte.explorer-width", String(explorerWidth));
+});
+// 中文：初始应用持久化的宽度与显隐状态（浏览器验证模式下同样安全：无文档 → 按钮禁用、侧栏隐藏）。
+// English: Apply the persisted width and visibility once at startup (safe in browser verification
+//       mode too: no document → button disabled, sidebar hidden).
+explorerWidth = clampExplorerWidth(explorerWidth);
+applyExplorerWidth();
+updateExplorerVisibility();
+window.addEventListener("resize", () => {
+  // 中文：窗口变窄时把宽度重新夹回合法区间，防止侧栏挤压编辑区（拖拽进行中不打断）。
+  // English: Re-clamp the width when the window shrinks so the sidebar cannot squeeze the editor
+  //       (an in-flight drag is not interrupted).
+  if (explorerResizeDrag) return;
+  const clamped = clampExplorerWidth(explorerWidth);
+  if (clamped !== explorerWidth) {
+    explorerWidth = clamped;
+    applyExplorerWidth();
+  }
+});
 fontSize.addEventListener("change", applyEditorFontSize);
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;

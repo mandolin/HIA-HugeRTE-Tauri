@@ -234,28 +234,34 @@ pub struct TreeEntry {
     is_supported_asset: bool,
 }
 
-/// 中文：按 ADR-0003 列出目录树的一层内容。作用域与 `resolve_document_asset` 同源
-/// （文档目录的父目录），canonicalize 后前缀校验拒绝越界与链接逃逸；返回条目按
-/// 目录优先、名称排序，仅含白名单元数据。失败一律返回空数组由前端降级为空态。
-/// English: List one level of a directory tree per ADR-0003. The scope matches
-/// `resolve_document_asset` (the document directory's parent); canonicalize plus prefix checks
-/// reject escapes and link jumps. Entries sort directories first then by name and carry only
-/// whitelisted metadata. Any failure returns an empty vector for the frontend's empty state.
+/// 中文：按 ADR-0003（2026-11-10 修订版）列出**指定绝对目录**的一层内容。
+/// 浏览由用户手势逐级导航驱动（面包屑/向上/树内双击），因此这里接受绝对路径；安全约束为：
+/// 必须是真实存在的目录（拒绝设备路径与非目录）、不跟随目录符号链接、只返回白名单元数据。
+/// 注意与 `resolve_document_asset` 的区别：那个是"文档内容驱动"的读取，仍严格限制在文档
+/// 目录父级作用域内；本命令是"用户手势驱动"的浏览，不写入任何文件。
+/// English: List one level of the given **absolute directory** per ADR-0003 (revised 2026-11-10).
+/// Browsing is driven by explicit user gestures (breadcrumb / Up / double-click), so an absolute
+/// path is accepted; the safety constraints are: it must be an existing real directory (device
+/// paths and non-directories rejected), directory symlinks are not followed, and only whitelisted
+/// metadata is returned. Contrast `resolve_document_asset`, which is document-content-driven and
+/// stays strictly inside the document directory's parent scope; this command is user-gesture
+/// driven and never writes anything.
 #[tauri::command]
-fn list_directory_tree(base_dir: String, relative_path: String) -> Vec<TreeEntry> {
+fn list_directory_tree(absolute_path: String) -> Vec<TreeEntry> {
     let mut entries: Vec<TreeEntry> = Vec::new();
-    let Some(base) = Path::new(&base_dir).canonicalize().ok() else {
+    // 中文：`read_html_document` 返回的 base_dir 本身就是 canonicalize 后的 `\\?\C:\...` 扩展长度形式，
+    // 因此**不能**把 `\\?\` 当设备路径拒绝；只拒绝 `\\.\` 设备命名空间。
+    // English: `read_html_document` returns base_dir in the canonicalized `\\?\C:\...` extended-length
+    // form, so `\\?\` must NOT be rejected as a device path; only the `\\.\` device namespace is.
+    if absolute_path.starts_with("\\\\.\\") {
+        return entries;
+    }
+    let Ok(canonical) = Path::new(&absolute_path).canonicalize() else {
         return entries;
     };
-    let Some(scope) = base.parent().map(Path::to_path_buf) else {
-        return entries;
-    };
-    let joined = base.join(&relative_path);
-    let Ok(canonical) = joined.canonicalize() else {
-        return entries;
-    };
-    let scope_with_sep = scope.join("");
-    if canonical != scope && !canonical.starts_with(&scope_with_sep) {
+    // 中文：只接受真实目录——普通文件一律拒绝。
+    // English: Real directories only — plain files are rejected.
+    if !canonical.is_dir() {
         return entries;
     }
     let Ok(read_dir) = fs::read_dir(&canonical) else {
@@ -654,18 +660,14 @@ mod tests {
     #[test]
     fn 目录树列出条目并目录优先排序() {
         let (workspace, document_dir) = create_tree_fixture();
-        let entries =
-            list_directory_tree(document_dir.to_string_lossy().into_owned(), ".".to_string());
+        let entries = list_directory_tree(document_dir.to_string_lossy().into_owned());
         assert_eq!(entries.len(), 2);
         assert!(entries[0].is_dir, "目录应排在文件之前");
         assert_eq!(entries[0].name, "assets");
         assert_eq!(entries[1].name, "page.html");
         assert!(!entries[1].is_supported_asset, "html 不属于资源白名单");
 
-        let sub = list_directory_tree(
-            document_dir.to_string_lossy().into_owned(),
-            "assets".to_string(),
-        );
+        let sub = list_directory_tree(document_dir.join("assets").to_string_lossy().into_owned());
         assert_eq!(sub.len(), 2);
         assert!(sub.iter().all(|entry| entry.is_supported_asset));
         assert_eq!(sub[0].name, "banner.png");
@@ -675,23 +677,54 @@ mod tests {
     }
 
     #[test]
-    fn 目录树拒绝越界与缺失目录() {
+    fn 目录树拒绝缺失目录与普通文件() {
         let (workspace, document_dir) = create_tree_fixture();
         assert!(list_directory_tree(
-            document_dir.to_string_lossy().into_owned(),
-            "../../..".to_string()
+            document_dir
+                .join("missing-dir")
+                .to_string_lossy()
+                .into_owned()
         )
         .is_empty());
+        // 中文：普通文件不是目录，必须返回空（浏览模型只列目录内容）。
+        // English: A plain file is not a directory and must yield empty (browsing lists contents).
         assert!(list_directory_tree(
-            document_dir.to_string_lossy().into_owned(),
-            "missing-dir".to_string()
+            document_dir
+                .join("page.html")
+                .to_string_lossy()
+                .into_owned()
         )
         .is_empty());
-        assert!(list_directory_tree(
-            document_dir.to_string_lossy().into_owned(),
-            "page.html".to_string()
-        )
-        .is_empty());
+        // 中文：设备命名空间形态一律拒绝。
+        // English: Device-namespace shaped paths are rejected.
+        assert!(list_directory_tree("\\\\.\\C:".to_string()).is_empty());
+        // 中文：canonicalize 后的 `\\?\` 扩展长度形式是内部正常形态（read_html_document 的 base_dir
+        // 就是这种），必须可列——回归防线，防止误伤侧栏根目录。
+        // English: The canonicalized `\\?\` extended-length form is a normal internal shape
+        // (read_html_document's base_dir uses it) and must list correctly — a regression guard so the
+        // explorer root is never wrongly rejected.
+        let extended = document_dir
+            .canonicalize()
+            .expect("应能 canonicalize 测试目录");
+        assert_eq!(
+            list_directory_tree(extended.to_string_lossy().into_owned()).len(),
+            2,
+            "扩展长度路径形式必须可列目录"
+        );
+
+        fs::remove_dir_all(&workspace).expect("应能清理临时测试目录");
+    }
+
+    #[test]
+    fn 目录树可浏览文档目录的上级() {
+        // 中文：浏览模型允许逐级上移（与文档内容解析的作用域约束不同），作用域外的目录也能列出。
+        // English: The browsing model allows ascending level by level (unlike the document-content
+        // scope); directories outside the scope can be listed too.
+        let (workspace, document_dir) = create_tree_fixture();
+        let parents = list_directory_tree(workspace.to_string_lossy().into_owned());
+        assert!(parents
+            .iter()
+            .any(|entry| entry.is_dir && entry.name == "doc"));
 
         fs::remove_dir_all(&workspace).expect("应能清理临时测试目录");
     }
