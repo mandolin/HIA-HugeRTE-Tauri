@@ -2,6 +2,15 @@
 
 All notable public changes will be documented in this file.
 
+## v0.2.1 - 2026-11-11
+
+Snapshot release carrying the post-`v0.2.0` explorer improvements (version designated by the maintainer; see `docs/versioning.md` for the `0.x` snapshot exception):
+
+- Explorer sidebar navigation now matches Windows Explorer: a clickable breadcrumb address bar (jump to any path segment, sibling-folder dropdown per segment, Up button) replaces the fixed document-directory root; the tree, expansion state, selection and asset previews all work on absolute paths. Document-content references stay bound by the original document-directory scope (ADR-0003 revised).
+- The address bar scrolls horizontally with the mouse wheel when overlong and auto-positions on the current segment after navigation.
+- The sidebar is resizable: drag the separator between the sidebar and the editor, or focus the separator and use the arrow keys; the chosen width is remembered.
+- Added a show/hide toggle for the explorer tree next to the toolbar; the choice is remembered across sessions while a document is open.
+
 ## v0.2.0 - 2026-11-10
 
 - Added multi-tab editing: files from startup arguments, drag-drop or the Open dialog each open in their own tab within one window; the tab strip shows dirty markers, close buttons and an overflow menu; closing a modified tab asks via the in-app confirmation modal; a 20-tab cap guards memory.
