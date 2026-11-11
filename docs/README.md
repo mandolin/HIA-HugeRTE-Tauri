@@ -4,9 +4,10 @@ This directory contains public documentation for users and contributors.
 
 Current documents:
 
-- [Application boundary](application-boundary.md): first-release scope, platform target and safety boundary.
+- [Application boundary](application-boundary.md): current release scope, platform target, safety boundary and the graded (A/B/C) boundary table.
 - [Versioning and release](versioning.md): version numbers, CHANGELOG discipline and release gates (Chinese).
-- [Portable user guide](../packaging/portable/README.md): extraction, WebView2, open and save instructions (Chinese).
+- [Portable user guide](../packaging/portable/README.md): extraction, WebView2, tabs, explorer sidebar, history, open and save instructions (Chinese).
 - [Contributing guide](../CONTRIBUTING.md): environment, quality gates and submission conventions (Chinese).
+- [CHANGELOG](../CHANGELOG.md): user-visible changes per release (English).
 
-`v0.1.0` is the completed first portable release baseline. It is intentionally a manual-association portable application: Windows **Open with** may point to the extracted executable, but the application does not silently register or take over file associations.
+The `v0.2.x` line is the current workspace release: multi-tab editing, a read-only explorer sidebar with breadcrumb navigation, and recent-file history. It remains a manual-association portable application: Windows **Open with** may point to the extracted executable, but the application does not silently register or take over file associations.
