@@ -274,6 +274,14 @@ async function initializeEditor(): Promise<void> {
   registerCompatibilityChecklistPlugin();
   const instances = await hugerte.init({
     target: editorTarget, height: "100%", menubar: false, promotion: false, branding: false, resize: false, convert_urls: false,
+    // 中文：contextmenu_never_use_native（维护者 2026-11-12 反馈）——编辑 iframe 内永不弹出 WebView2
+    //       原生右键菜单；HugeRTE 自带的上下文菜单（默认作用于链接/图片/表格等元素）正常弹出。
+    //       外壳区域的默认菜单由下方 document 级拦截负责。
+    // English: contextmenu_never_use_native (maintainer feedback 2026-11-12) — the WebView2 native
+    //       context menu never appears inside the editor iframe; HugeRTE's own context menu (by
+    //       default active on links/images/tables) still pops up. The shell area's default menu is
+    //       handled by the document-level interception below.
+    contextmenu_never_use_native: true,
     skin_url: "default", content_css: "default",
     statusbar: true,
     object_resizing: "table",
@@ -301,15 +309,6 @@ async function initializeEditor(): Promise<void> {
   });
   editor = instances[0] ?? null;
   if (!editor) throw new Error("HugeRTE 未能创建编辑器实例。");
-  // 中文：屏蔽编辑 iframe 内的 WebView2 默认右键菜单（维护者 2026-11-12 反馈）。外壳文档已统一
-  //       拦截；iframe 是独立文档，需在自身 document 上挂监听。HugeRTE 无自带右键菜单，
-  //       直接 preventDefault 即可。iframe id 随 target 推导为 `hugerte-editor_ifr`。
-  // English: Suppress the WebView2 default context menu inside the editor iframe (maintainer
-  //       feedback 2026-11-12). The shell document is blocked globally; the iframe is its own
-  //       document and needs the listener on itself. HugeRTE ships no context menu, so a plain
-  //       preventDefault suffices. The iframe id derives from the target as `hugerte-editor_ifr`.
-  document.querySelector<HTMLIFrameElement>("#hugerte-editor_ifr")?.contentDocument
-    ?.addEventListener("contextmenu", (event) => event.preventDefault());
   await replaceDocument(tabs[activeIndex].document);
   applyEditorFontSize();
 }
@@ -1208,13 +1207,16 @@ explorerToggleButton.addEventListener("click", () => {
   localStorage.setItem("hia-hugerte.explorer-hidden", explorerHiddenByUser ? "1" : "0");
   updateExplorerVisibility();
 });
-// 中文：屏蔽 WebView2 默认右键菜单（维护者 2026-11-12 反馈）：外壳不是浏览器——返回/刷新/打印/
-//       另存为等动作与编辑器外壳语义冲突（「刷新」还会整页重载外壳丢状态）。编辑 iframe 在编辑器
-//       初始化处单独拦截（iframe 为独立文档）。不提供自定义右键菜单（未要求）。
-// English: Suppress the WebView2 default context menu (maintainer feedback 2026-11-12): the shell is
-//       not a browser — Back/Reload/Print/Save-as conflict with editor-shell semantics ("Reload"
-//       would also reload the shell and drop state). The editor iframe is intercepted separately at
-//       editor init (it is its own document). No custom context menu is provided (not requested).
+// 中文：屏蔽外壳区域的 WebView2 默认右键菜单（维护者 2026-11-12 反馈）：外壳不是浏览器——
+//       返回/刷新/打印/另存为等动作与编辑器外壳语义冲突（「刷新」还会整页重载外壳丢状态）。
+//       范围仅限外壳；编辑 iframe 内由 HugeRTE 的 contextmenu_never_use_native 选项负责
+//       （原生菜单永不弹、HugeRTE 自带菜单保留）。不提供自定义右键菜单（未要求）。
+// English: Suppress the WebView2 default context menu over the shell (maintainer feedback
+//       2026-11-12): the shell is not a browser — Back/Reload/Print/Save-as conflict with
+//       editor-shell semantics ("Reload" would also reload the shell and drop state). Scope is
+//       the shell only; inside the editor iframe HugeRTE's contextmenu_never_use_native option
+//       takes care of it (native menu never shows, HugeRTE's own menu is preserved). No custom
+//       context menu is provided (not requested).
 document.addEventListener("contextmenu", (event) => event.preventDefault());
 // 中文：地址栏鼠标滚轮横向滚动——纵向增量转为 scrollLeft；触控板与 shift+滚轮的 deltaX 走原生
 //       路径不动，无横向溢出时不拦截事件（维护者 2026-11-10 反馈：地址栏超长无法滚动）。
