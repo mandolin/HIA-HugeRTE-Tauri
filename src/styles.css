@@ -85,7 +85,16 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 .explorer__up { flex: none; width: 1.55rem; height: 1.55rem; display: grid; place-items: center; border: 1px solid #d4dde1; border-radius: .3rem; background: #fff; color: #425466; cursor: pointer; font-size: .8rem; padding: 0; }
 .explorer__up:hover:not(:disabled), .explorer__up:focus-visible:not(:disabled) { color: #034661; background: #e1fdf9; border-color: #8cc2cf; }
 .explorer__up:disabled { color: #c4ced4; cursor: default; background: #f5f7f8; }
-.explorer__breadcrumb { display: flex; align-items: center; gap: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: .1rem .1rem; border: 1px solid #e0e7ea; border-radius: .35rem; background: #fff; scrollbar-width: thin; }
+.explorer__breadcrumb { display: flex; align-items: center; gap: 0; min-width: 0; overflow-x: auto; overflow-y: hidden; white-space: nowrap; padding: .1rem .1rem; border: 1px solid #e0e7ea; border-radius: .35rem; background: #fff; scrollbar-width: none; }
+/* 中文：隐藏地址栏滚动条（维护者 2026-11-12 反馈：滚轮可滚即可，滚动条视觉冗余）。
+   scrollbars 双保险：scrollbar-width:none（Chromium 121+）+ ::-webkit-scrollbar（老内核兜底）。
+   隐藏后定位不丢——渲染时自动把当前段滚入视野（renderBreadcrumb 末尾 scrollLeft=scrollWidth）。 */
+/* English: Hide the address-bar scrollbar (maintainer feedback 2026-11-12: wheel scrolling is
+   enough, the scrollbar is visual noise). Belt-and-braces for both scrollbar mechanisms:
+   scrollbar-width:none (Chromium 121+) plus ::-webkit-scrollbar for older engines. Positioning is
+   not lost — rendering auto-scrolls the current segment into view (scrollLeft=scrollWidth at the
+   end of renderBreadcrumb). */
+.explorer__breadcrumb::-webkit-scrollbar { display: none; }
 .explorer__crumb-device { flex: none; padding: 0 .35rem 0 .3rem; font-size: .8rem; color: #425466; }
 .explorer__crumb-item { flex: none; display: inline-flex; align-items: stretch; border-radius: .28rem; }
 .explorer__crumb-item:hover, .explorer__crumb-item:focus-within { background: #eef3f5; }
