@@ -39,11 +39,20 @@ button, select { font: inherit; }
    itself; directory rows start with a real expand/collapse button (maintainer revision),
    keyboard-operable (Enter/Space). */
 /* 中文：侧栏 4 行网格——头部/面包屑行/树（吃掉剩余高度）/预览卡。行数必须等于子元素数，
-   否则面包屑会抢占弹性行悬在半空（2026-11-10 手测发现的布局缺陷）。 */
+   否则面包屑会抢占弹性行悬在半空（2026-11-10 手测发现的布局缺陷）。
+   列必须 minmax(0,1fr)（2026-11-12 深路径实测教训）：隐式 auto 列会被面包屑行的 max-content
+   撑到容器外（实测 row=505 vs panel=260，行内容在 475px 的 nav 里完全放得下 → 滚轮守卫判
+   "无溢出"而失效），可见截断实为 overflow:hidden 裁剪；minmax(0,1fr) 强制列宽=容器宽，
+   行/导航随之收缩、overflow-x:auto 才真正可滚。 */
 /* English: The sidebar is a 4-row grid — head / breadcrumb row / tree (takes remaining height) /
    preview card. The row count must match the child count, otherwise the breadcrumb steals the
-   flexible row and floats mid-panel (layout defect found in manual testing 2026-11-10). */
-.explorer { flex: 0 0 260px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; max-height: 100%; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; overflow: hidden; }
+   flexible row and floats mid-panel (layout defect found in manual testing 2026-11-10).
+   The column MUST be minmax(0,1fr) (measured lesson 2026-11-12 with deep paths): the implicit
+   auto column is blown out to the breadcrumb row's max-content (measured row=505 vs panel=260;
+   the content fits fully inside the 475px nav, so the wheel guard saw "no overflow" and died),
+   and the visible truncation was just overflow:hidden clipping. minmax(0,1fr) pins the column to
+   the container width so the row/nav shrink and overflow-x:auto actually scrolls. */
+.explorer { flex: 0 0 260px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; max-height: 100%; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; overflow: hidden; }
 .explorer[hidden] { display: none; }
 /* 中文：侧栏宽度分隔条（维护者 2026-11-10 需求）：自身 0.4rem 宽，负外边距恰好抵消两侧
    flex gap——视觉间距与无分隔条时一致（0.55rem），悬停/拖拽/键盘聚焦时显示高亮条；
