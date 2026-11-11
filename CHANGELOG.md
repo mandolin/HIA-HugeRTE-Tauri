@@ -2,6 +2,12 @@
 
 All notable public changes will be documented in this file.
 
+## v0.2.1-fix.1 - 2026-11-12
+
+- Fixed the default context menu: the WebView2 menu (Back/Reload/Print/Save-as) no longer appears over the application shell (explorer tree, tabs, header); inside the editor the native menu is suppressed through HugeRTE's `contextmenu_never_use_native` option while HugeRTE's own context menu (links/images/tables) is preserved.
+- Fixed breadcrumb address-bar wheel scrolling: on deep paths the sidebar grid column was blown out to the breadcrumb's content width (measured row=505px vs panel=260px), which silently disabled scrolling; the column is now pinned with `minmax(0, 1fr)`.
+- Hidden the breadcrumb scrollbar; wheel scrolling and auto-positioning on the current segment are unchanged.
+
 ## v0.2.1 - 2026-11-11
 
 Snapshot release carrying the post-`v0.2.0` explorer improvements (version designated by the maintainer; see `docs/versioning.md` for the `0.x` snapshot exception):
