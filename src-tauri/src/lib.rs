@@ -453,6 +453,230 @@ fn recent_files_clear() {
     }
 }
 
+// ===== 授权式「打开方式候选注册」（ADR-0001 2026-11-12 修订版修订条目 1） =====
+//
+// 中文：语义边界（ADR 定案）——只能由用户在应用内**显式触发**；每用户（HKCU）；可一键撤销；
+//       不写 `UserChoice`（系统 hash 保护且属默认接管）、不设默认关联、不触碰任何提权位置。
+// 注册形态：`Applications\<exe名>` 定义本应用 + 两个扩展名的 `OpenWithList` 候选登记，
+// 使 Windows「打开方式」列表出现本应用；用户仍需在系统界面中自行选择。
+// 实现经系统 `reg.exe`（固定 System32 绝对路径，不经 PATH 解析），避免引入新的注册表 crate。
+//
+// English: Semantic boundary (decided in the ADR) — only on **explicit user action**; per-user
+//       (HKCU); one-click removable; never writes `UserChoice` (hash-protected and a default
+//       takeover), never sets a default handler, never touches privileged hives. Registration form:
+//       `Applications\<exe name>` defines this app plus `OpenWithList` candidate entries for both
+//       extensions, which makes the app appear in the Windows "Open with" list; the user still
+//       picks it in the system UI. Implemented through the system `reg.exe` (absolute System32 path,
+//       never resolved via PATH) to avoid adding a registry crate.
+
+/// 中文：`Applications` 与 `OpenWithList` 中使用的可执行文件名（固定，不随构建目录变化）。
+/// English: Executable name used under `Applications` and `OpenWithList` (fixed, independent of the
+/// build directory).
+const ASSOCIATION_EXE_NAME: &str = "HIA HugeRTE.exe";
+
+/// 中文：注册覆盖的扩展名（与产品范围一致：仅 .html/.htm）。
+/// English: Extensions covered by the registration (matching product scope: `.html`/`.htm` only).
+const ASSOCIATION_EXTENSIONS: [&str; 2] = [".html", ".htm"];
+
+/// 中文：注册状态（前端据此显示「注册/移除」按钮与说明）。
+/// English: Registration status (drives the frontend's register/remove button and explanation).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssociationStatus {
+    /// 中文：是否已注册（`Applications` 下的命令指向当前程序）。 / English: Whether registered (the command under `Applications` points at this executable).
+    registered: bool,
+    /// 中文：当前程序的完整路径（前端展示"注册的就是这个位置"）。 / English: Full path of this executable (the frontend shows "this is the registered location").
+    current_exe: String,
+}
+
+/// 中文：本应用的「打开方式」命令行形态：`"<exe>" "%1"`（`%1` 由 Windows 启动时替换）。
+/// English: This app's "Open with" command line: `"<exe>" "%1"` (`%1` is substituted by Windows).
+fn association_command_line(exe: &Path) -> String {
+    format!("\"{}\" \"%1\"", exe.display())
+}
+
+/// 中文：`reg.exe` 的固定路径（System32 下），避免经 PATH 解析到被替换的同名程序。
+/// English: Fixed path to `reg.exe` under System32 so PATH cannot resolve to an impostor.
+fn reg_exe_path() -> PathBuf {
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    system_root.join("System32").join("reg.exe")
+}
+
+/// 中文：`Applications\<exe名>\shell\open\command` 的完整键路径。
+/// English: Full registry key path for `Applications\<exe name>\shell\open\command`.
+fn association_command_key() -> String {
+    format!(r"HKCU\Software\Classes\Applications\{ASSOCIATION_EXE_NAME}\shell\open\command")
+}
+
+/// 中文：注册操作序列的可测内核（不含副作用）：依次写入应用定义、友好名与两个扩展名的候选登记。
+/// 每条命令为 `reg.exe` 的完整参数表，供 `run_reg` 直接执行。
+/// English: Testable core of the registration sequence (no side effects): writes the application
+/// definition, the friendly name and the candidate entries for both extensions. Each command is the
+/// complete argument list for `reg.exe`, executed directly by `run_reg`.
+fn association_register_operations(exe: &Path) -> Vec<Vec<String>> {
+    let applications_key = format!(r"HKCU\Software\Classes\Applications\{ASSOCIATION_EXE_NAME}");
+    let mut operations = vec![
+        // 中文：应用定义——「打开方式」列表中显示的名字。
+        // English: Application definition — the name shown in the "Open with" list.
+        vec![
+            "add".to_string(),
+            applications_key.clone(),
+            "/v".to_string(),
+            "FriendlyAppName".to_string(),
+            "/t".to_string(),
+            "REG_SZ".to_string(),
+            "/d".to_string(),
+            "HIA HugeRTE".to_string(),
+            "/f".to_string(),
+        ],
+        // 中文：应用启动命令——带引号的 exe 路径加 `"%1"` 文档参数。
+        // English: Launch command — quoted executable path plus the `"%1"` document argument.
+        vec![
+            "add".to_string(),
+            format!(r"{applications_key}\shell\open\command"),
+            "/ve".to_string(),
+            "/t".to_string(),
+            "REG_SZ".to_string(),
+            "/d".to_string(),
+            association_command_line(exe),
+            "/f".to_string(),
+        ],
+    ];
+    // 中文：两个扩展名的候选登记（值名 = 可执行文件名，值为空字符串）。
+    // English: Candidate entries for both extensions (value name = executable name, empty value).
+    for extension in ASSOCIATION_EXTENSIONS {
+        operations.push(vec![
+            "add".to_string(),
+            format!(r"HKCU\Software\Classes\{extension}\OpenWithList"),
+            "/v".to_string(),
+            ASSOCIATION_EXE_NAME.to_string(),
+            "/t".to_string(),
+            "REG_SZ".to_string(),
+            "/d".to_string(),
+            String::new(),
+            "/f".to_string(),
+        ]);
+    }
+    operations
+}
+
+/// 中文：移除操作序列的可测内核：删除两个扩展名的候选值与应用定义键（对等清理，不留残留）。
+/// English: Testable core of the removal sequence: deletes both extension candidate values and the
+/// application definition key (symmetric cleanup, no leftovers).
+fn association_unregister_operations() -> Vec<Vec<String>> {
+    let mut operations = Vec::new();
+    for extension in ASSOCIATION_EXTENSIONS {
+        operations.push(vec![
+            "delete".to_string(),
+            format!(r"HKCU\Software\Classes\{extension}\OpenWithList"),
+            "/v".to_string(),
+            ASSOCIATION_EXE_NAME.to_string(),
+            "/f".to_string(),
+        ]);
+    }
+    operations.push(vec![
+        "delete".to_string(),
+        format!(r"HKCU\Software\Classes\Applications\{ASSOCIATION_EXE_NAME}"),
+        "/f".to_string(),
+    ]);
+    operations
+}
+
+/// 中文：执行一条 `reg.exe` 命令；失败时返回带命令上下文的错误（不吞错）。
+/// English: Run one `reg.exe` command; on failure return an error carrying the command context
+/// (never swallowed).
+fn run_reg(arguments: &[String]) -> Result<(), String> {
+    let output = std::process::Command::new(reg_exe_path())
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("[registry.command] 无法执行 reg.exe：{error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "[registry.command] 注册表操作失败（{}）：{}",
+        arguments.first().cloned().unwrap_or_default(),
+        stderr.trim()
+    ))
+}
+
+/// 中文：查询当前是否已注册（读取 `Applications` 下的命令并与当前路径比较）。
+/// English: Query whether the app is currently registered (read the command under `Applications`
+/// and compare it with the current path).
+fn association_is_registered(exe: &Path) -> bool {
+    let output = std::process::Command::new(reg_exe_path())
+        .args(["query", &association_command_key(), "/ve"])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    // 中文：输出形如 `    (默认)    REG_SZ    "C:\...\app.exe" "%1"`；取 REG_SZ 之后的部分比较。
+    // English: Output looks like `    (default)    REG_SZ    "C:\...\app.exe" "%1"`; compare the
+    //       part after REG_SZ.
+    let text = String::from_utf8_lossy(&output.stdout);
+    let expected = association_command_line(exe);
+    text.lines().any(|line| {
+        line.split_once("REG_SZ")
+            .map(|(_, value)| value.trim() == expected)
+            .unwrap_or(false)
+    })
+}
+
+/// 中文：读取关联状态（只读；前端进入设置面时调用）。
+/// English: Read the association status (read-only; called when the frontend opens the settings surface).
+#[tauri::command]
+fn open_with_status() -> AssociationStatus {
+    let exe = std::env::current_exe().unwrap_or_default();
+    AssociationStatus {
+        registered: association_is_registered(&exe),
+        current_exe: exe.display().to_string(),
+    }
+}
+
+/// 中文：注册为「打开方式」候选（用户显式触发）。逐条执行并保留失败上下文；成功后再回读校验。
+/// English: Register as an "Open with" candidate (explicit user action). Runs each command keeping
+/// the failure context and re-reads the state to verify success.
+#[tauri::command]
+fn open_with_register() -> Result<AssociationStatus, String> {
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("[registry.exe] 无法确定程序路径：{error}"))?;
+    for operation in association_register_operations(&exe) {
+        run_reg(&operation)?;
+    }
+    if !association_is_registered(&exe) {
+        return Err("[registry.verify] 注册完成但回读校验未通过。".to_string());
+    }
+    Ok(AssociationStatus {
+        registered: true,
+        current_exe: exe.display().to_string(),
+    })
+}
+
+/// 中文：移除「打开方式」候选登记（对等清理）。已不存在时视为成功（幂等），最终回读确认。
+/// English: Remove the "Open with" candidate registration (symmetric cleanup). Absent entries count
+/// as success (idempotent); the final re-read confirms the outcome.
+#[tauri::command]
+fn open_with_unregister() -> Result<AssociationStatus, String> {
+    let exe = std::env::current_exe()
+        .map_err(|error| format!("[registry.exe] 无法确定程序路径：{error}"))?;
+    for operation in association_unregister_operations() {
+        // 中文：删除不存在的值/键会返回非零码，按幂等处理——记录但不中止。
+        // English: Deleting a missing value/key returns a non-zero code; treat as idempotent —
+        //       record but do not abort.
+        let _ = run_reg(&operation);
+    }
+    Ok(AssociationStatus {
+        registered: association_is_registered(&exe),
+        current_exe: exe.display().to_string(),
+    })
+}
+
 pub fn run() {
     let startup_paths = std::env::args_os()
         .skip(1)
@@ -476,7 +700,10 @@ pub fn run() {
             list_directory_tree,
             recent_files_load,
             recent_files_record,
-            recent_files_clear
+            recent_files_clear,
+            open_with_status,
+            open_with_register,
+            open_with_unregister
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");
@@ -720,7 +947,10 @@ mod tests {
         // 中文：浏览模型允许逐级上移（与文档内容解析的作用域约束不同），作用域外的目录也能列出。
         // English: The browsing model allows ascending level by level (unlike the document-content
         // scope); directories outside the scope can be listed too.
-        let (workspace, document_dir) = create_tree_fixture();
+        // 中文：只用 workspace 作为上级目录入口；绝对路径模型下文档目录不再是浏览根。
+        // English: Only the workspace serves as the parent-directory entry; under the absolute-path
+        // model the document directory is no longer the browsing root.
+        let (workspace, _document_dir) = create_tree_fixture();
         let parents = list_directory_tree(workspace.to_string_lossy().into_owned());
         assert!(parents
             .iter()
@@ -758,5 +988,81 @@ mod tests {
         // English: Corrupt input falls back to empty (equivalent to recent_files_load tolerance).
         let broken: Option<RecentFilesFile> = serde_json::from_str("{not-json").ok();
         assert!(broken.is_none());
+    }
+
+    #[test]
+    fn 关联注册操作序列覆盖应用定义与两个扩展名的候选登记() {
+        // 中文：可测内核——验证注册操作的结构（真实注册表写入由 WIN 用例/手测覆盖）。
+        // English: Testable core — verifies the registration operation structure (real registry
+        //       writes are covered by WIN cases / manual testing).
+        let exe = Path::new(r"C:\Apps\HIA HugeRTE.exe");
+        let operations = association_register_operations(exe);
+        assert_eq!(operations.len(), 4, "两条应用定义 + 两个扩展名候选");
+        let flattened: Vec<String> = operations.iter().flatten().cloned().collect();
+        assert!(flattened
+            .iter()
+            .any(|part| part.contains(r"Applications\HIA HugeRTE.exe")));
+        assert!(flattened
+            .iter()
+            .any(|part| part.ends_with(r"shell\open\command")));
+        assert!(flattened
+            .iter()
+            .any(|part| part == r"HKCU\Software\Classes\.html\OpenWithList"));
+        assert!(flattened
+            .iter()
+            .any(|part| part == r"HKCU\Software\Classes\.htm\OpenWithList"));
+        // 中文：命令行形态必须是「引号包路径 + "%1"」，否则带空格的路径会被 Windows 拆开。
+        // English: The command line must be a quoted path plus `"%1"`, otherwise paths with spaces
+        //       would be split by Windows.
+        assert!(flattened.contains(&r#""C:\Apps\HIA HugeRTE.exe" "%1""#.to_string()));
+    }
+
+    #[test]
+    fn 关联操作只写每用户根且绝不触碰_user_choice() {
+        // 中文：红线回归（ADR-0001 修订条目 1）——所有键必须是 HKCU；不得出现 UserChoice
+        //       （系统 hash 保护、属默认接管），也不得出现 HKLM/HKCR 等全局或提权位置。
+        // English: Red-line regression (ADR-0001 revision item 1) — every key must be HKCU; no
+        //       UserChoice (hash-protected, a default takeover), no HKLM/HKCR or other global or
+        //       privileged locations.
+        let exe = Path::new(r"C:\Apps\HIA HugeRTE.exe");
+        let mut all: Vec<String> = association_register_operations(exe)
+            .into_iter()
+            .flatten()
+            .collect();
+        all.extend(association_unregister_operations().into_iter().flatten());
+        let registry_keys: Vec<&String> = all
+            .iter()
+            .filter(|part| {
+                part.starts_with("HKCU") || part.starts_with("HKLM") || part.starts_with("HKCR")
+            })
+            .collect();
+        assert!(!registry_keys.is_empty(), "应至少有一个注册表键");
+        for key in registry_keys {
+            assert!(key.starts_with("HKCU"), "只允许每用户键：{key}");
+            assert!(!key.contains("UserChoice"), "不得触碰 UserChoice：{key}");
+        }
+    }
+
+    #[test]
+    fn 关联移除操作与应用定义对称() {
+        // 中文：移除必须与注册对等——删两个扩展名候选值 + 删应用定义键，不留残留。
+        // English: Removal must mirror registration — delete both extension candidate values and the
+        //       application definition key, leaving no leftovers.
+        let operations = association_unregister_operations();
+        assert_eq!(operations.len(), 3);
+        let flattened: Vec<String> = operations.iter().flatten().cloned().collect();
+        assert!(flattened.iter().all(|part| part != "add"));
+        assert!(
+            flattened
+                .iter()
+                .filter(|part| part.as_str() == "delete")
+                .count()
+                == 3
+        );
+        assert!(flattened.contains(&r"HKCU\Software\Classes\.html\OpenWithList".to_string()));
+        assert!(flattened.contains(&r"HKCU\Software\Classes\.htm\OpenWithList".to_string()));
+        assert!(
+            flattened.contains(&r"HKCU\Software\Classes\Applications\HIA HugeRTE.exe".to_string())
+        );
     }
 }
