@@ -202,3 +202,27 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 .history-item__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-item__meta { color: #7d939f; font-size: .74rem; white-space: nowrap; }
 .history-menu__foot { padding: .4rem .7rem; border-top: 1px solid #e0e7ea; color: #98a8b1; font-size: .72rem; }
+
+/* 中文：设置面板（基线原型 v1，维护者 2026-11-13 确认）——与历史下拉同层（fixed 定位、同一阴影与
+   边框），宽度 26rem；两个分区以细分隔线分开。定位与历史下拉一致（顶部按钮行下方右侧）。
+   English: Settings panel (baseline draft v1, confirmed by the maintainer 2026-11-13) — same layer as
+   the history dropdown (fixed positioning, same border/shadow), 26rem wide; two sections split by a
+   hairline. Positioned like the history dropdown (top-right, below the button row). */
+.settings-panel { position: fixed; z-index: 45; top: 5rem; right: 1rem; width: 26rem; max-width: calc(100vw - 2rem); border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 22%); overflow: hidden; display: grid; }
+.settings-panel__head { display: flex; justify-content: space-between; align-items: center; gap: .4rem; padding: .5rem .7rem; border-bottom: 1px solid #e0e7ea; font-size: .8rem; color: #425466; }
+.settings-panel__version { color: #98a8b1; font-size: .74rem; }
+.settings-panel__section { display: grid; gap: .4rem; padding: .6rem .7rem .7rem; border-bottom: 1px solid #eef2f4; }
+.settings-panel__section:last-child { border-bottom: none; }
+.settings-panel__title { font-size: .82rem; font-weight: 600; color: #15202b; }
+.settings-panel__note { font-size: .74rem; color: #7d939f; line-height: 1.45; }
+.settings-panel__row { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
+.settings-panel__state { font-size: .76rem; color: #425466; display: inline-flex; align-items: center; }
+.settings-panel__dot { display: inline-block; width: .5rem; height: .5rem; margin-right: .32rem; border-radius: 50%; background: #98a8b1; }
+.settings-panel__dot--on { background: #1a7f5a; }
+.settings-panel__action { font: inherit; font-size: .78rem; padding: .28rem .7rem; border: 1px solid #8cc2cf; border-radius: .3rem; background: #fff; color: #034661; cursor: pointer; }
+.settings-panel__action:hover:not(:disabled), .settings-panel__action:focus-visible:not(:disabled) { background: #e1fdf9; }
+.settings-panel__action:disabled { color: #9fb6c0; border-color: #d4dde1; cursor: default; }
+.settings-panel__quiet { font: inherit; font-size: .76rem; padding: .24rem .55rem; border: 1px solid #d4dde1; border-radius: .3rem; background: #fff; color: #425466; cursor: pointer; }
+.settings-panel__quiet:hover { background: #eef3f5; }
+.settings-panel__path { font-size: .72rem; color: #526874; word-break: break-all; background: #f5f7f8; border-radius: .25rem; padding: .2rem .35rem; }
+.settings-panel__path[hidden] { display: none; }

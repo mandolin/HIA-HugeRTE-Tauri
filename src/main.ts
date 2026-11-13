@@ -43,6 +43,7 @@ app.innerHTML = `
         <button id="save-as-document" type="button" title="另存为 HTML 文件">另存为</button>
         <button id="history-button" type="button" title="最近打开的文件">历史 ▾</button>
         <button id="explorer-toggle" type="button" title="显示/隐藏目录树" aria-pressed="false">显示目录树</button>
+        <button id="settings-button" type="button" title="设置：打开方式与版本信息">设置 ▾</button>
       </nav>
     </header>
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
@@ -562,6 +563,180 @@ async function toggleHistoryMenu(): Promise<void> {
 
 /** @lang zh-CN 运行时判定（拖放节同款）；历史按钮在浏览器验证模式下隐藏。 / @lang en Runtime check (same as the drop section); the history button hides in browser verification mode. */
 function isTauriRuntimeCheck(): boolean { return "__TAURI_INTERNALS__" in window; }
+
+/**
+ * @lang zh-CN
+ * 「设置 ▾」面板（设计基线稿 v1，2026-11-13 维护者确认）：`打开方式` 区展示注册状态并提供显式
+ * 注册/移除（ADR-0001 2026-11-12 修订条目 1：每用户、可撤销、不写 `UserChoice`、不设默认），
+ * 另提供「打开 Windows 默认应用设置」引导；`版本` 区显示当前版本与「打开下载页」（零网络形态，
+ * 修订条目 2：只提示不下载）。点击其他区域或再次点击入口关闭；操作期间按钮禁用防重入。
+ * @lang en
+ * The "Settings ▾" panel (baseline draft v1, confirmed by the maintainer 2026-11-13): the
+ * `Open with` section shows the registration state with explicit register/remove actions
+ * (ADR-0001 2026-11-12 revision item 1: per-user, reversible, never writes `UserChoice`, never sets
+ * a default) plus a "open Windows default apps settings" helper; the `Version` section shows the
+ * current version and "open download page" (zero-network form, revision item 2: notify only, never
+ * download). Clicking elsewhere or the entry again closes it; buttons disable during an operation to
+ * prevent re-entry.
+ */
+async function toggleSettingsPanel(): Promise<void> {
+  const existing = document.querySelector(".settings-panel");
+  if (existing) { existing.remove(); return; }
+  if (!isTauriRuntimeCheck()) return;
+
+  /** @lang zh-CN 面板容器（与历史下拉同层的轻量浮层）。 / @lang en Panel container (lightweight popover on the same layer as the history dropdown). */
+  const panel = document.createElement("div");
+  panel.className = "settings-panel";
+
+  /** @lang zh-CN 头部：标题 + 版本号（版本号来自 Rust 的编译期常量）。 / @lang en Header: title plus the version from Rust's compile-time constant. */
+  const head = document.createElement("div");
+  head.className = "settings-panel__head";
+  const headTitle = document.createElement("span");
+  headTitle.textContent = "设置";
+  const headVersion = document.createElement("span");
+  headVersion.className = "settings-panel__version";
+  headVersion.textContent = "";
+  head.append(headTitle, headVersion);
+  panel.appendChild(head);
+
+  // 中文：打开方式区——状态点 + 主按钮；状态来自 open_with_status（只读查询）。
+  // English: The Open with section — state dot plus primary button; state from open_with_status.
+  const assocSection = document.createElement("div");
+  assocSection.className = "settings-panel__section";
+  const assocTitle = document.createElement("div");
+  assocTitle.className = "settings-panel__title";
+  assocTitle.textContent = "打开方式";
+  const assocNote = document.createElement("div");
+  assocNote.className = "settings-panel__note";
+  assocNote.textContent = "注册后本应用会出现在 Windows「打开方式」列表中。不会设为默认打开程序，也不修改系统的默认应用设置。";
+  const assocRow = document.createElement("div");
+  assocRow.className = "settings-panel__row";
+  const assocState = document.createElement("span");
+  assocState.className = "settings-panel__state";
+  const assocAction = document.createElement("button");
+  assocAction.type = "button";
+  assocAction.className = "settings-panel__action";
+  const assocHelper = document.createElement("button");
+  assocHelper.type = "button";
+  assocHelper.className = "settings-panel__quiet";
+  assocHelper.textContent = "打开 Windows 默认应用设置";
+  assocHelper.addEventListener("click", async () => {
+    // 中文：引导用户在系统界面自行选择默认程序（本应用不设默认）。打开系统「默认应用」页。
+    // English: Guide the user to pick a default in the system UI (this app never sets one). Opens the
+    //       Windows "Default apps" settings page.
+    try {
+      await invoke("open_default_apps_settings");
+      setStatus("已在系统「默认应用」设置中选择本程序");
+    } catch (error) {
+      setStatus(`打开系统设置失败：${formatError(error)}`);
+    }
+  });
+  const assocPath = document.createElement("div");
+  assocPath.className = "settings-panel__path";
+  assocRow.append(assocState, assocAction, assocHelper);
+  assocSection.append(assocTitle, assocNote, assocRow, assocPath);
+  panel.appendChild(assocSection);
+
+  /**
+   * @lang zh-CN
+   * 渲染关联状态：已注册显示绿点 + 「移除注册」+ 实际 exe 路径；未注册显示灰点 + 「注册到打开方式列表」。
+   * @lang en
+   * Render the association state: registered shows a green dot, "remove registration" and the actual
+   * executable path; unregistered shows a grey dot and "register into the Open with list".
+   */
+  const renderAssociation = (registered: boolean, currentExe: string): void => {
+    assocState.textContent = "";
+    const dot = document.createElement("span");
+    dot.className = `settings-panel__dot${registered ? " settings-panel__dot--on" : ""}`;
+    assocState.append(dot, document.createTextNode(registered ? "已注册" : "未注册"));
+    assocAction.textContent = registered ? "移除注册" : "注册到打开方式列表";
+    assocAction.dataset.action = registered ? "unregister" : "register";
+    assocPath.textContent = registered && currentExe ? currentExe : "";
+    assocPath.hidden = !(registered && currentExe);
+    assocNote.textContent = registered
+      ? "已注册到 Windows「打开方式」列表（未设为默认）。在系统中选择本应用时，Windows 会把文件路径传给本程序。"
+      : "注册后本应用会出现在 Windows「打开方式」列表中。不会设为默认打开程序，也不修改系统的默认应用设置。";
+  };
+
+  /** @lang zh-CN 状态载荷（Rust `AssociationStatus`）。 / @lang en The status payload (Rust `AssociationStatus`). */
+  interface AssociationStatusPayload { registered: boolean; currentExe: string; }
+
+  assocAction.addEventListener("click", async () => {
+    const command = assocAction.dataset.action === "unregister" ? "open_with_unregister" : "open_with_register";
+    assocAction.disabled = true;
+    try {
+      const result = await invoke<AssociationStatusPayload>(command);
+      renderAssociation(result.registered, result.currentExe);
+      setStatus(result.registered ? "已注册到「打开方式」列表（可在系统设置中选择）" : "已移除「打开方式」注册");
+    } catch (error) {
+      // 中文：失败保留在面板内提示，不关闭面板（便于用户重试或查看原因）。
+      // English: Keep the failure visible inside the panel and do not close it (so the user can retry
+      //       or read the reason).
+      assocNote.textContent = `操作失败：${formatError(error)}`;
+    } finally {
+      assocAction.disabled = false;
+    }
+  });
+  panel.appendChild(assocSection);
+
+  // 中文：版本区——当前版本 + 「打开下载页」（零网络：不在应用内请求远端）。
+  // English: Version section — current version plus "open download page" (zero network: nothing is
+  // requested from inside the app).
+  const versionSection = document.createElement("div");
+  versionSection.className = "settings-panel__section";
+  const versionTitle = document.createElement("div");
+  versionTitle.className = "settings-panel__title";
+  versionTitle.textContent = "版本";
+  const versionNote = document.createElement("div");
+  versionNote.className = "settings-panel__note";
+  versionNote.textContent = "本程序不联网检查更新、不会自动下载或替换自身；有新版本时请前往下载页手动替换。";
+  const versionRow = document.createElement("div");
+  versionRow.className = "settings-panel__row";
+  const versionState = document.createElement("span");
+  versionState.className = "settings-panel__state";
+  versionState.textContent = "当前版本 —";
+  const versionAction = document.createElement("button");
+  versionAction.type = "button";
+  versionAction.className = "settings-panel__action";
+  versionAction.textContent = "打开下载页";
+  versionAction.addEventListener("click", async () => {
+    versionAction.disabled = true;
+    try {
+      await invoke<string>("open_releases_page");
+      setStatus("已在浏览器中打开下载页");
+    } catch (error) {
+      setStatus(`打开下载页失败：${formatError(error)}`);
+    } finally {
+      versionAction.disabled = false;
+    }
+  });
+  versionRow.append(versionState, versionAction);
+  versionSection.append(versionTitle, versionNote, versionRow);
+  panel.appendChild(versionSection);
+
+  // 中文：点击面板外或再次点入口关闭（与历史下拉一致）。
+  // English: Close on click outside or on the entry again (same as the history dropdown).
+  panel.addEventListener("click", (event) => { if (event.target === panel) panel.remove(); });
+  document.body.appendChild(panel);
+
+  // 中文：并行加载状态与版本；任一失败只影响对应区域文案，不阻断面板使用。
+  // English: Load status and version in parallel; a failure only affects that section's copy and
+  // never blocks the panel.
+  try {
+    const status = await invoke<AssociationStatusPayload>("open_with_status");
+    renderAssociation(status.registered, status.currentExe);
+  } catch {
+    assocNote.textContent = "无法读取当前注册状态。";
+    assocAction.hidden = true;
+  }
+  try {
+    const info = await invoke<{ version: string; releasesUrl: string }>("app_version_info");
+    headVersion.textContent = `v${info.version}`;
+    versionState.textContent = `当前版本 ${info.version}`;
+  } catch {
+    versionState.textContent = "当前版本未知";
+  }
+}
 
 /** @lang zh-CN 专用确认：清空历史（复用模态壳，文案与确认按钮文案按清空场景临时替换并复原）。 / @lang en Dedicated confirm: clear history (reuses the modal shell; swaps and restores the confirm-button copy for the clear scenario). */
 function confirmClearHistory(): Promise<boolean> {
@@ -1195,6 +1370,10 @@ requiredElement<HTMLButtonElement>("#open-document").addEventListener("click", (
 requiredElement<HTMLButtonElement>("#save-document").addEventListener("click", () => void saveDocument(false));
 requiredElement<HTMLButtonElement>("#save-as-document").addEventListener("click", () => void saveDocument(true));
 requiredElement<HTMLButtonElement>("#history-button").addEventListener("click", () => void toggleHistoryMenu());
+// 中文：设置面板入口（ADR-0001 修订条目 1/2 的界面）。浏览器验证模式下按钮隐藏（无原生命令）。
+// English: Settings panel entry (the UI for ADR-0001 revision items 1/2). Hidden in browser
+//       verification mode (no native commands there).
+requiredElement<HTMLButtonElement>("#settings-button").addEventListener("click", () => void toggleSettingsPanel());
 explorerUpButton.addEventListener("click", () => {
   const parent = parentPath(explorerRootPath);
   if (parent) void setExplorerRoot(parent);
@@ -1288,9 +1467,11 @@ fontSize.addEventListener("change", applyEditorFontSize);
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
 if (!isTauriRuntime) {
-  // 中文：浏览器兼容性验证模式下无原生历史存储，隐藏入口。
-  // English: No native history storage in browser verification mode; hide the entry point.
+  // 中文：浏览器兼容性验证模式下无原生历史存储与设置命令，隐藏对应入口。
+  // English: No native history storage or settings commands in browser verification mode; hide those
+  //       entry points.
   requiredElement<HTMLButtonElement>("#history-button").hidden = true;
+  requiredElement<HTMLButtonElement>("#settings-button").hidden = true;
 }
 
 if (isTauriRuntime) {

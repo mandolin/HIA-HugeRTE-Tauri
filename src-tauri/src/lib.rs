@@ -677,6 +677,76 @@ fn open_with_unregister() -> Result<AssociationStatus, String> {
     })
 }
 
+// ===== 更新提示（ADR-0001 修订条目 2 的零网络形态） =====
+//
+// 中文：形态边界（2026-11-12 维护者定案「按建议」）：**只显示版本号 + 打开下载页**，
+//       不发任何网络请求、不检查远端版本、不自动下载。因此不需要 HTTP 依赖，也不改变 CSP
+//       （页面通过系统默认浏览器打开，不在应用内加载远端内容）。
+// English: Shape boundary (maintainer decision 2026-11-12: "follow the recommendation"): **show the
+//       version and open the download page only** — no network request, no remote version check, no
+//       automatic download. Hence no HTTP dependency and no CSP change (the page opens in the system
+//       default browser, never inside the app).
+
+/// 中文：公开下载页（GitHub Releases 列表）。仅在用户点击时经系统浏览器打开。
+/// English: Public download page (GitHub Releases list). Opened in the system browser only on click.
+const RELEASES_PAGE_URL: &str = "https://github.com/mandolin/HIA-HugeRTE-Tauri/releases";
+
+/// 中文：应用版本信息（前端设置面展示；版本号来自编译期 `CARGO_PKG_VERSION`，与三源一致）。
+/// English: Application version info (shown in the settings surface; the version comes from
+/// `CARGO_PKG_VERSION` at compile time, consistent with the three version sources).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppVersionInfo {
+    /// 中文：当前版本号（如 `0.2.1-fix.1`）。 / English: Current version (e.g. `0.2.1-fix.1`).
+    version: String,
+    /// 中文：下载页地址（供前端「打开下载页」按钮说明与跳转）。 / English: Download page URL (shown/opened by the frontend's button).
+    releases_url: String,
+}
+
+/// 中文：读取版本与下载页地址（只读、无网络）。
+/// English: Read the version and download page URL (read-only, no network).
+#[tauri::command]
+fn app_version_info() -> AppVersionInfo {
+    AppVersionInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        releases_url: RELEASES_PAGE_URL.to_string(),
+    }
+}
+
+/// 中文：在系统默认浏览器中打开下载页（用户显式点击触发）。仅允许该常量地址，不接受前端传入
+/// 任意 URL——避免把「打开外部链接」变成任意外链能力面。
+/// English: Open the download page in the system default browser (explicit user action). Only the
+/// constant URL is allowed; the frontend cannot pass an arbitrary URL — this keeps "open an external
+/// link" from becoming a general-purpose capability surface.
+#[tauri::command]
+fn open_releases_page() -> Result<String, String> {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", RELEASES_PAGE_URL])
+        .status()
+        .map_err(|error| format!("[shell.browser] 无法调用系统浏览器：{error}"))?;
+    if !status.success() {
+        return Err("[shell.browser] 系统浏览器未能打开下载页。".to_string());
+    }
+    Ok(RELEASES_PAGE_URL.to_string())
+}
+
+/// 中文：打开系统「默认应用」设置页（`ms-settings:defaultapps`）。用于引导用户自行选择默认程序——
+/// 本应用**从不**写入默认关联（ADR-0001 修订条目 1）。固定 URI，不接受前端传入任意目标。
+/// English: Open the Windows "Default apps" settings page (`ms-settings:defaultapps`). This only
+/// guides the user to pick a default themselves — the app **never** writes a default association
+/// (ADR-0001 revision item 1). Fixed URI; the frontend cannot pass an arbitrary target.
+#[tauri::command]
+fn open_default_apps_settings() -> Result<(), String> {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "ms-settings:defaultapps"])
+        .status()
+        .map_err(|error| format!("[shell.settings] 无法打开系统设置：{error}"))?;
+    if !status.success() {
+        return Err("[shell.settings] 系统「默认应用」设置页未能打开。".to_string());
+    }
+    Ok(())
+}
+
 pub fn run() {
     let startup_paths = std::env::args_os()
         .skip(1)
@@ -703,7 +773,10 @@ pub fn run() {
             recent_files_clear,
             open_with_status,
             open_with_register,
-            open_with_unregister
+            open_with_unregister,
+            app_version_info,
+            open_releases_page,
+            open_default_apps_settings
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

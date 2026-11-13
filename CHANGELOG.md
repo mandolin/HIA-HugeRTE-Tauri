@@ -2,6 +2,11 @@
 
 All notable public changes will be documented in this file.
 
+## Unreleased
+
+- Added a Settings panel (header "设置 ▾"): register the application into the Windows **Open with** list as a per-user candidate — explicit, reversible, never setting the default and never touching the system's protected default-selection keys; a helper button opens the Windows default-apps settings for users who want to pick a default themselves.
+- The Settings panel also shows the current version and can open the download page in the system browser. The application performs no update check over the network, never downloads, and never replaces itself.
+
 ## v0.2.1-fix.1 - 2026-11-12
 
 - Fixed the default context menu: the WebView2 menu (Back/Reload/Print/Save-as) no longer appears over the application shell (explorer tree, tabs, header); inside the editor the native menu is suppressed through HugeRTE's `contextmenu_never_use_native` option while HugeRTE's own context menu (links/images/tables) is preserved.
