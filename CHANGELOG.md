@@ -2,10 +2,11 @@
 
 All notable public changes will be documented in this file.
 
-## Unreleased
+## v0.3.0 - 2026-11-13
 
-- Added a Settings panel (header "设置 ▾"): register the application into the Windows **Open with** list as a per-user candidate — explicit, reversible, never setting the default and never touching the system's protected default-selection keys; a helper button opens the Windows default-apps settings for users who want to pick a default themselves.
-- The Settings panel also shows the current version and can open the download page in the system browser. The application performs no update check over the network, never downloads, and never replaces itself.
+- Added a Settings panel (header "设置 ▾"): register the application into the Windows **Open with** list as a per-user candidate — explicit, reversible, never setting the default and never touching the system's protected default-selection keys; a helper button opens the Windows default-apps settings for users who want to pick a default themselves. The panel also shows the registered executable path and offers one-click removal.
+- The Settings panel shows the current version and can open the download page in the system browser. The application performs no update check over the network, never downloads, and never replaces itself; no HTTP capability was added.
+- Both actions are covered by a Windows regression that compares the registry before and after (candidate entries appear and are removed symmetrically; the protected default-selection key is never modified).
 
 ## v0.2.1-fix.1 - 2026-11-12
 
