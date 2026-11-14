@@ -91,6 +91,8 @@ const explorerBreadcrumb = requiredElement<HTMLElement>("#explorer-breadcrumb");
 const explorerUpButton = requiredElement<HTMLButtonElement>("#explorer-up");
 const explorerResizer = requiredElement<HTMLDivElement>("#explorer-resizer");
 const explorerToggleButton = requiredElement<HTMLButtonElement>("#explorer-toggle");
+const historyButton = requiredElement<HTMLButtonElement>("#history-button");
+const settingsButton = requiredElement<HTMLButtonElement>("#settings-button");
 const workbench = requiredElement<HTMLElement>("#workbench");
 const confirmScrim = requiredElement<HTMLDivElement>("#confirm-scrim");
 const confirmMessage = requiredElement<HTMLParagraphElement>("#confirm-message");
@@ -310,6 +312,15 @@ async function initializeEditor(): Promise<void> {
   });
   editor = instances[0] ?? null;
   if (!editor) throw new Error("HugeRTE 未能创建编辑器实例。");
+  // 中文：编辑 iframe 内的 mousedown 转发给活动浮层关闭器——iframe 是独立文档，外壳级外点监听
+  //       收不到里面的点击；用户点击编辑区时浮动面板（历史/设置/面包屑下拉）必须关闭
+  //       （2026-11-14 外点关闭修复的 iframe 缺口）。
+  // English: Forward mousedowns inside the editor iframe to the active-floater closer — the iframe
+  //       is its own document and shell-level outside listeners never see clicks there; floating
+  //       surfaces (history/settings/crumb dropdown) must close when the user clicks the editor
+  //       (the iframe gap in the 2026-11-14 outside-click fix).
+  document.querySelector<HTMLIFrameElement>("#hugerte-editor_ifr")?.contentDocument
+    ?.addEventListener("mousedown", () => { activeFloaterCloser?.(); });
   await replaceDocument(tabs[activeIndex].document);
   applyEditorFontSize();
 }
@@ -490,7 +501,12 @@ async function createDocument(): Promise<void> {
  */
 async function toggleHistoryMenu(): Promise<void> {
   const existing = document.querySelector(".history-menu");
-  if (existing) { existing.remove(); return; }
+  if (existing) {
+    // 中文：经关闭器移除（顺带清掉编辑 iframe 缺口注册的引用与外点监听）。
+    // English: Remove via the closer (which also clears the iframe-gap registration and the outside listener).
+    activeFloaterCloser?.();
+    return;
+  }
   if (isTauriRuntimeCheck()) {
     const menu = document.createElement("div");
     menu.className = "history-menu";
@@ -558,6 +574,29 @@ async function toggleHistoryMenu(): Promise<void> {
     menu.appendChild(footer);
     menu.addEventListener("click", (event) => { if (event.target === menu) menu.remove(); });
     document.body.appendChild(menu);
+    // 中文：外点关闭（2026-11-14 维护者反馈修复——此前只有再点入口才会消失）。mousedown 捕获级
+    //       监听：目标不在菜单内且不在入口按钮上（入口自身的切换由 click 处理，避免"关了又开"）
+    //       即关闭。菜单经其他路径移除后，本监听会在下一次外点时自清理（对已脱离节点 no-op）。
+    // English: Close on outside click (fix for maintainer feedback 2026-11-14 — previously only
+    //       re-clicking the entry closed it). A capture-phase mousedown listener closes the menu when
+    //       the target is neither inside the menu nor on the entry button (the entry's own toggle is
+    //       handled by click, avoiding a close-then-reopen race). If the menu is removed via another
+    //       path, the listener self-cleans on the next outside mousedown (no-op on the detached node).
+    const closeHistoryOnOutside = (event: MouseEvent): void => {
+      const target = event.target as Node;
+      if (!menu.contains(target) && !historyButton.contains(target)) {
+        closeHistoryMenu();
+      }
+    };
+    // 中文：关闭器 = 移除菜单 + 清外点监听 + 注销活动浮层引用。
+    // English: The closer = remove the menu + detach the outside listener + unregister the active floater.
+    const closeHistoryMenu = (): void => {
+      menu.remove();
+      document.removeEventListener("mousedown", closeHistoryOnOutside, true);
+      if (activeFloaterCloser === closeHistoryMenu) activeFloaterCloser = null;
+    };
+    document.addEventListener("mousedown", closeHistoryOnOutside, true);
+    activeFloaterCloser = closeHistoryMenu;
   }
 }
 
@@ -588,6 +627,19 @@ let versionInfoCache: AppVersionInfoPayload | null = null;
 
 /**
  * @lang zh-CN
+ * 当前活动浮层（历史下拉/设置面板/面包屑下拉）的关闭器。编辑 iframe 是独立文档，外壳级
+ * mousedown 监听收不到 iframe 内的点击——iframe 侧的 mousedown 调用本关闭器，让浮动面板在
+ * "点击编辑区"时关闭（2026-11-14 外点关闭修复的 iframe 缺口）。
+ * @lang en
+ * Closer for the currently active floater (history dropdown / settings panel / crumb dropdown). The
+ * editor iframe is its own document, so shell-level mousedown listeners never see clicks inside it —
+ * the iframe side calls this closer on mousedown, closing floating surfaces when the user clicks the
+ * editor (the iframe gap in the 2026-11-14 outside-click fix).
+ */
+let activeFloaterCloser: (() => void) | null = null;
+
+/**
+ * @lang zh-CN
  * 「设置 ▾」面板（设计基线稿 v1，2026-11-13 维护者确认）：`打开方式` 区展示注册状态并提供显式
  * 注册/移除（ADR-0001 2026-11-12 修订条目 1：每用户、可撤销、不写 `UserChoice`、不设默认），
  * 另提供「打开 Windows 默认应用设置」引导；`版本` 区显示当前版本与「打开下载页」（零网络形态，
@@ -606,7 +658,12 @@ let versionInfoCache: AppVersionInfoPayload | null = null;
  */
 async function toggleSettingsPanel(): Promise<void> {
   const existing = document.querySelector(".settings-panel");
-  if (existing) { existing.remove(); return; }
+  if (existing) {
+    // 中文：经关闭器移除（与历史下拉同法）。
+    // English: Remove via the closer (same as the history dropdown).
+    activeFloaterCloser?.();
+    return;
+  }
   if (!isTauriRuntimeCheck()) return;
 
   /** @lang zh-CN 面板容器（与历史下拉同层的轻量浮层）。 / @lang en Panel container (lightweight popover on the same layer as the history dropdown). */
@@ -749,6 +806,26 @@ async function toggleSettingsPanel(): Promise<void> {
   // English: Close on click outside or on the entry again (same as the history dropdown).
   panel.addEventListener("click", (event) => { if (event.target === panel) panel.remove(); });
   document.body.appendChild(panel);
+  // 中文：外点关闭（2026-11-14 维护者反馈，与历史下拉同法）——mousedown 捕获级监听，目标不在
+  //       面板内且不在入口按钮上即关闭；其他路径移除面板后监听自清理。
+  // English: Close on outside click (maintainer feedback 2026-11-14, same as the history dropdown) —
+  //       a capture-phase mousedown listener closes the panel when the target is neither inside the
+  //       panel nor on the entry button; the listener self-cleans after other removal paths.
+  const closeSettingsOnOutside = (event: MouseEvent): void => {
+    const target = event.target as Node;
+    if (!panel.contains(target) && !settingsButton.contains(target)) {
+      closeSettingsPanel();
+    }
+  };
+  // 中文：关闭器 = 移除面板 + 清外点监听 + 注销活动浮层引用。
+  // English: The closer = remove the panel + detach the outside listener + unregister the active floater.
+  const closeSettingsPanel = (): void => {
+    panel.remove();
+    document.removeEventListener("mousedown", closeSettingsOnOutside, true);
+    if (activeFloaterCloser === closeSettingsPanel) activeFloaterCloser = null;
+  };
+  document.addEventListener("mousedown", closeSettingsOnOutside, true);
+  activeFloaterCloser = closeSettingsPanel;
 
   // 中文：数据加载改走会话缓存（维护者 2026-11-14 定案）——有缓存直接渲染（零延迟）；无缓存
   //       （本会话首次打开）才各做一次查询并写入缓存。加载中的占位文案避免出现空白按钮。
@@ -1165,15 +1242,27 @@ async function openCrumbDropdown(anchor: HTMLElement, segmentPath: string): Prom
   menu.style.left = `${Math.round(rect.left)}px`;
   menu.style.top = `${Math.round(rect.bottom + 4)}px`;
   document.body.appendChild(menu);
-  // 中文：点击别处关闭（一次性监听，避免累积）。
-  // English: Close on outside click (one-shot listener, no accumulation).
+  // 中文：点击别处关闭（一次性监听，避免累积）；同时注册为活动浮层——编辑 iframe 内的点击
+  //       经 activeFloaterCloser 关闭本下拉（iframe 缺口同法修补）。
+  // English: Close on outside click (one-shot listener, no accumulation); also registered as the
+  //       active floater so a click inside the editor iframe closes this dropdown via
+  //       activeFloaterCloser (same iframe-gap remedy).
   const close = (event: MouseEvent) => {
     if (!menu.contains(event.target as Node)) {
       menu.remove();
       document.removeEventListener("mousedown", close, true);
+      if (activeFloaterCloser === closeCrumbDropdownMenu) activeFloaterCloser = null;
     }
   };
-  setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+  const closeCrumbDropdownMenu = (): void => {
+    menu.remove();
+    document.removeEventListener("mousedown", close, true);
+    if (activeFloaterCloser === closeCrumbDropdownMenu) activeFloaterCloser = null;
+  };
+  setTimeout(() => {
+    document.addEventListener("mousedown", close, true);
+    activeFloaterCloser = closeCrumbDropdownMenu;
+  }, 0);
 }
 
 /**
@@ -1416,11 +1505,11 @@ requiredElement<HTMLButtonElement>("#new-document").addEventListener("click", ()
 requiredElement<HTMLButtonElement>("#open-document").addEventListener("click", () => void openWithDialog());
 requiredElement<HTMLButtonElement>("#save-document").addEventListener("click", () => void saveDocument(false));
 requiredElement<HTMLButtonElement>("#save-as-document").addEventListener("click", () => void saveDocument(true));
-requiredElement<HTMLButtonElement>("#history-button").addEventListener("click", () => void toggleHistoryMenu());
+historyButton.addEventListener("click", () => void toggleHistoryMenu());
 // 中文：设置面板入口（ADR-0001 修订条目 1/2 的界面）。浏览器验证模式下按钮隐藏（无原生命令）。
 // English: Settings panel entry (the UI for ADR-0001 revision items 1/2). Hidden in browser
 //       verification mode (no native commands there).
-requiredElement<HTMLButtonElement>("#settings-button").addEventListener("click", () => void toggleSettingsPanel());
+settingsButton.addEventListener("click", () => void toggleSettingsPanel());
 explorerUpButton.addEventListener("click", () => {
   const parent = parentPath(explorerRootPath);
   if (parent) void setExplorerRoot(parent);
@@ -1517,8 +1606,8 @@ if (!isTauriRuntime) {
   // 中文：浏览器兼容性验证模式下无原生历史存储与设置命令，隐藏对应入口。
   // English: No native history storage or settings commands in browser verification mode; hide those
   //       entry points.
-  requiredElement<HTMLButtonElement>("#history-button").hidden = true;
-  requiredElement<HTMLButtonElement>("#settings-button").hidden = true;
+  historyButton.hidden = true;
+  settingsButton.hidden = true;
 }
 
 if (isTauriRuntime) {
