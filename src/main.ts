@@ -564,12 +564,37 @@ async function toggleHistoryMenu(): Promise<void> {
 /** @lang zh-CN 运行时判定（拖放节同款）；历史按钮在浏览器验证模式下隐藏。 / @lang en Runtime check (same as the drop section); the history button hides in browser verification mode. */
 function isTauriRuntimeCheck(): boolean { return "__TAURI_INTERNALS__" in window; }
 
+/** @lang zh-CN 状态载荷（Rust `AssociationStatus`）。 / @lang en The status payload (Rust `AssociationStatus`). */
+interface AssociationStatusPayload { registered: boolean; currentExe: string; }
+
+/** @lang zh-CN 版本信息载荷（Rust `AppVersionInfo`；版本为编译期常量，运行期不变）。 / @lang en Version info payload (Rust `AppVersionInfo`; the version is a compile-time constant and never changes at runtime). */
+interface AppVersionInfoPayload { version: string; releasesUrl: string; }
+
+/**
+ * @lang zh-CN
+ * 设置面数据的会话级缓存（维护者 2026-11-14 定案：首次打开查询，后续直接读缓存，消除每次开面板
+ * 拉起 `reg.exe` 的卡顿）。`null` = 本次会话尚未查询。注册/移除操作成功后用返回值回写，保证面板
+ * 内操作即时反映。已知取舍：会话期间若在应用外手工改动注册表，面板要重启才会刷新——ADR 红线
+ * （不写 `UserChoice`、不设默认）不受影响，故可接受。
+ * @lang en
+ * Session-level caches for the settings surface (maintainer decision 2026-11-14: query on first
+ * open, read from cache afterwards, removing the per-open `reg.exe` spawn stutter). `null` means not
+ * yet queried this session. Register/remove write their results back so in-panel actions reflect
+ * immediately. Accepted trade-off: registry changes made outside the app only show after a restart —
+ * the ADR red lines (no `UserChoice`, no default takeover) are unaffected, so this is acceptable.
+ */
+let associationCache: AssociationStatusPayload | null = null;
+let versionInfoCache: AppVersionInfoPayload | null = null;
+
 /**
  * @lang zh-CN
  * 「设置 ▾」面板（设计基线稿 v1，2026-11-13 维护者确认）：`打开方式` 区展示注册状态并提供显式
  * 注册/移除（ADR-0001 2026-11-12 修订条目 1：每用户、可撤销、不写 `UserChoice`、不设默认），
  * 另提供「打开 Windows 默认应用设置」引导；`版本` 区显示当前版本与「打开下载页」（零网络形态，
  * 修订条目 2：只提示不下载）。点击其他区域或再次点击入口关闭；操作期间按钮禁用防重入。
+ * 数据经**会话级缓存**（维护者 2026-11-14 定案）：首次打开查询 `open_with_status`/`app_version_info`
+ * 并写缓存，后续打开直接渲染缓存（消除每次拉起 `reg.exe` 的卡顿）；注册/移除成功后回写缓存。
+ * 已知取舍：应用外改动注册表需重启应用才会在面板刷新。
  * @lang en
  * The "Settings ▾" panel (baseline draft v1, confirmed by the maintainer 2026-11-13): the
  * `Open with` section shows the registration state with explicit register/remove actions
@@ -651,6 +676,9 @@ async function toggleSettingsPanel(): Promise<void> {
     assocState.append(dot, document.createTextNode(registered ? "已注册" : "未注册"));
     assocAction.textContent = registered ? "移除注册" : "注册到打开方式列表";
     assocAction.dataset.action = registered ? "unregister" : "register";
+    // 中文：加载占位阶段会临时隐藏主按钮，渲染即恢复可见。
+    // English: The loading placeholder temporarily hides the primary button; rendering restores it.
+    assocAction.hidden = false;
     assocPath.textContent = registered && currentExe ? currentExe : "";
     assocPath.hidden = !(registered && currentExe);
     assocNote.textContent = registered
@@ -658,14 +686,17 @@ async function toggleSettingsPanel(): Promise<void> {
       : "注册后本应用会出现在 Windows「打开方式」列表中。不会设为默认打开程序，也不修改系统的默认应用设置。";
   };
 
-  /** @lang zh-CN 状态载荷（Rust `AssociationStatus`）。 / @lang en The status payload (Rust `AssociationStatus`). */
-  interface AssociationStatusPayload { registered: boolean; currentExe: string; }
+  /** @lang zh-CN 状态载荷（Rust `AssociationStatus`；见模块级缓存说明）。 / @lang en The status payload (Rust `AssociationStatus`; see the module-level cache note). */
+  // （类型已上移到模块级，供缓存变量使用。 / Type moved to module level for the cache variables.）
 
   assocAction.addEventListener("click", async () => {
     const command = assocAction.dataset.action === "unregister" ? "open_with_unregister" : "open_with_register";
     assocAction.disabled = true;
     try {
       const result = await invoke<AssociationStatusPayload>(command);
+      // 中文：操作结果回写缓存——面板下次打开直接呈现最新状态。
+      // English: Write the operation result back to the cache — the next panel open shows it directly.
+      associationCache = result;
       renderAssociation(result.registered, result.currentExe);
       setStatus(result.registered ? "已注册到「打开方式」列表（可在系统设置中选择）" : "已移除「打开方式」注册");
     } catch (error) {
@@ -719,22 +750,38 @@ async function toggleSettingsPanel(): Promise<void> {
   panel.addEventListener("click", (event) => { if (event.target === panel) panel.remove(); });
   document.body.appendChild(panel);
 
-  // 中文：并行加载状态与版本；任一失败只影响对应区域文案，不阻断面板使用。
-  // English: Load status and version in parallel; a failure only affects that section's copy and
-  // never blocks the panel.
-  try {
-    const status = await invoke<AssociationStatusPayload>("open_with_status");
-    renderAssociation(status.registered, status.currentExe);
-  } catch {
-    assocNote.textContent = "无法读取当前注册状态。";
+  // 中文：数据加载改走会话缓存（维护者 2026-11-14 定案）——有缓存直接渲染（零延迟）；无缓存
+  //       （本会话首次打开）才各做一次查询并写入缓存。加载中的占位文案避免出现空白按钮。
+  // English: Data loading now goes through the session cache (maintainer decision 2026-11-14) — with
+  //       a cache the panel renders immediately (zero delay); without one (first open this session)
+  //       a single query per value runs and populates the cache. Loading placeholders avoid empty
+  //       buttons mid-load.
+  if (associationCache) {
+    renderAssociation(associationCache.registered, associationCache.currentExe);
+  } else {
+    assocState.textContent = "读取中…";
     assocAction.hidden = true;
+    try {
+      const status = await invoke<AssociationStatusPayload>("open_with_status");
+      associationCache = status;
+      renderAssociation(status.registered, status.currentExe);
+    } catch {
+      assocState.textContent = "状态未知";
+      assocNote.textContent = "无法读取当前注册状态。";
+    }
   }
-  try {
-    const info = await invoke<{ version: string; releasesUrl: string }>("app_version_info");
-    headVersion.textContent = `v${info.version}`;
-    versionState.textContent = `当前版本 ${info.version}`;
-  } catch {
-    versionState.textContent = "当前版本未知";
+  if (versionInfoCache) {
+    headVersion.textContent = `v${versionInfoCache.version}`;
+    versionState.textContent = `当前版本 ${versionInfoCache.version}`;
+  } else {
+    try {
+      const info = await invoke<AppVersionInfoPayload>("app_version_info");
+      versionInfoCache = info;
+      headVersion.textContent = `v${info.version}`;
+      versionState.textContent = `当前版本 ${info.version}`;
+    } catch {
+      versionState.textContent = "当前版本未知";
+    }
   }
 }
 
