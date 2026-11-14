@@ -2,6 +2,10 @@
 
 All notable public changes will be documented in this file.
 
+## Unreleased
+
+- Fixed floating surfaces (History dropdown, Settings panel, breadcrumb dropdown): they now close when clicking anywhere outside them — including clicks inside the editor area, which the previous implementation could not see (the editor iframe is a separate document). Clicking the entry button again still toggles them.
+
 ## v0.3.0 - 2026-11-13
 
 - Added a Settings panel (header "设置 ▾"): register the application into the Windows **Open with** list as a per-user candidate — explicit, reversible, never setting the default and never touching the system's protected default-selection keys; a helper button opens the Windows default-apps settings for users who want to pick a default themselves. The panel also shows the registered executable path and offers one-click removal.
