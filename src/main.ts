@@ -323,6 +323,26 @@ async function initializeEditor(): Promise<void> {
   //       (the iframe gap in the 2026-11-14 outside-click fix).
   document.querySelector<HTMLIFrameElement>("#hugerte-editor_ifr")?.contentDocument
     ?.addEventListener("mousedown", () => { activeFloaterCloser?.(); });
+  // 中文：状态栏计数中文化（维护者 2026-11-15 反馈："7 words" 需显示字符数等）——HugeRTE 内置
+  //       计数为英文单值（"{0} words"）。方案：把内置计数按钮替换为中文双显示元素（字符 + 词），
+  //       并监听插件派发的 `wordCountUpdate` 事件（携带 words/characters 统计）持续刷新。
+  //       词数语义：HugeRTE 按通用分词规则计数，每个 CJK 字符计为一个词；字符数含空格。
+  // English: Status-bar count in Chinese (maintainer feedback 2026-11-15: "7 words" should show
+  //       character counts etc.) — the built-in count is a single English value ("{0} words").
+  //       Approach: replace the built-in count button with a Chinese dual display element
+  //       (characters + words) and refresh it from the plugin's `wordCountUpdate` event (which
+  //       carries words/characters stats). Word semantics: HugeRTE counts by universal word
+  //       segmentation — each CJK character counts as one word; character count includes spaces.
+  const builtInCount = document.querySelector(".tox-statusbar__wordcount");
+  if (builtInCount) {
+    const countDisplay = document.createElement("span");
+    countDisplay.className = "tox-statusbar__wordcount";
+    countDisplay.textContent = "字符 0 · 词 0";
+    builtInCount.replaceWith(countDisplay);
+    editor.on("wordCountUpdate", (event: { wordCount: { words: number; characters: number } }) => {
+      countDisplay.textContent = `字符 ${event.wordCount.characters} · 词 ${event.wordCount.words}`;
+    });
+  }
   await replaceDocument(tabs[activeIndex].document);
   applyEditorFontSize();
 }
