@@ -29,11 +29,15 @@ export const HUGERTE_FONT_FAMILY_FORMATS = [
   "Inter=Inter,'Noto Sans',sans-serif", "Noto Sans SC='Noto Sans SC','Source Han Sans SC',sans-serif", "思源黑体 SC='Source Han Sans SC','Noto Sans SC',sans-serif", "更纱黑体 SC='Sarasa Gothic SC','Noto Sans SC',sans-serif", "Noto Serif SC='Noto Serif SC','Source Han Serif SC',serif", "思源宋体 SC='Source Han Serif SC','Noto Serif SC',serif", "等距更纱黑体 SC='Sarasa Mono SC','Noto Sans Mono CJK SC',monospace", "Noto Sans Mono='Noto Sans Mono','Noto Sans Mono CJK SC','Sarasa Mono SC',monospace", "JetBrains Mono='JetBrains Mono','Fira Code',monospace", "Fira Code='Fira Code','JetBrains Mono',monospace", "霞鹜文楷等宽='LXGW WenKai Mono','Sarasa Mono SC',monospace"
 ].join("; ");
 
-/** 中文：与参考 HugeRTE 编辑路径一致的原生插件集合。 */
-export const HUGERTE_COMPATIBILITY_PLUGINS = "advlist autolink lists link image media table code fullscreen checklist charmap";
+/** 中文：与参考 HugeRTE 编辑路径一致的原生插件集合。
+    2026-11-15 契约演进（滚动批 W-hrt-P6.3，维护者「先逐步实现功能」）：新增 `searchreplace`（文档内查找替换）
+    与 `wordcount`（状态栏字数统计）——两者均为 HugeRTE 自带插件，只影响编辑器 UI，不触碰 HTML 输出契约。
+    同步断言见 hugerte-compatibility.test.ts。 */
+export const HUGERTE_COMPATIBILITY_PLUGINS = "advlist autolink lists link image media table code fullscreen checklist charmap searchreplace wordcount";
 
-/** 中文：不含 Obsidian 宿主专用剪贴板按钮的兼容工具栏。 */
-export const HUGERTE_COMPATIBILITY_TOOLBAR = "undo redo | htmlvCut htmlvCopy htmlvPaste htmlvPasteText htmlvSelectAll | blocks fontfamily fontsize | bold italic underline strikethrough forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist checklist | outdent indent | link image media table | charmap | removeformat code fullscreen";
+/** 中文：不含 Obsidian 宿主专用剪贴板按钮的兼容工具栏。
+    2026-11-15 契约演进：charmap 后新增 `searchreplace` 按钮（查找替换对话框）。 */
+export const HUGERTE_COMPATIBILITY_TOOLBAR = "undo redo | htmlvCut htmlvCopy htmlvPaste htmlvPasteText htmlvSelectAll | blocks fontfamily fontsize | bold italic underline strikethrough forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist checklist | outdent indent | link image media table | charmap searchreplace | removeformat code fullscreen";
 
 /** 中文：返回与参考编辑器默认启用组等价的 HugeRTE charmap 配置。 */
 export function buildDefaultCharacterMap(): [number, string][] {

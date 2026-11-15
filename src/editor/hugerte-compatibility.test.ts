@@ -27,6 +27,12 @@ describe("HugeRTE 兼容配置", () => {
     expect(HUGERTE_COMPATIBILITY_TOOLBAR).toContain("htmlvCut htmlvCopy htmlvPaste htmlvPasteText htmlvSelectAll");
   });
 
+  it("包含查找替换与字数统计（2026-11-15 契约演进，滚动批 W-hrt-P6.3）", () => {
+    expect(HUGERTE_COMPATIBILITY_PLUGINS).toContain("searchreplace");
+    expect(HUGERTE_COMPATIBILITY_PLUGINS).toContain("wordcount");
+    expect(HUGERTE_COMPATIBILITY_TOOLBAR).toContain("charmap searchreplace");
+  });
+
   it("固定参考编辑器的字体格式契约", () => {
     expect(HUGERTE_FONT_SIZE_FORMATS).toBe("8pt 9pt 10pt 11pt 12pt 14pt 15pt 16pt 18pt 20pt 24pt 28pt 32pt 36pt");
     expect(HUGERTE_FONT_FAMILY_FORMATS).toContain("霞鹜文楷等宽");

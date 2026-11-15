@@ -12,6 +12,8 @@ import "hugerte/plugins/image";
 import "hugerte/plugins/link";
 import "hugerte/plugins/lists";
 import "hugerte/plugins/media";
+import "hugerte/plugins/searchreplace";
+import "hugerte/plugins/wordcount";
 import "hugerte/plugins/table";
 import "hugerte/themes/silver";
 import "hugerte/skins/content/default/content";
