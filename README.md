@@ -2,12 +2,13 @@
 
 HIA HugeRTE Tauri is a Windows desktop HTML editor built around HugeRTE and packaged with Tauri.
 
-The current workspace release line (`v0.2.x`) provides a focused local-document workflow:
+The current workspace release line (`v0.3.0`) provides a focused local-document workflow:
 
 - Create, open and save UTF-8 `.htm` / `.html` documents; edit them with HugeRTE.
 - Edit multiple documents at once: every opened file gets its own tab, with dirty markers, close confirmation for modified tabs and an overflow menu (up to 20 tabs per window).
 - Browse the opened document's directory in a read-only explorer sidebar: a Windows-Explorer-style breadcrumb (clickable segments, sibling-folder dropdowns, Up button), mouse-wheel horizontal scrolling for long paths, a drag-to-resize separator (arrow keys work too) and a show/hide toggle next to the toolbar.
 - Reopen recent files from the **History** menu, with a no-record mode and a clear-history confirmation; records are stored portable-first next to the executable (`data/recent-files.json`) and never touch the registry.
+- Configure integration from the **Settings** panel: register the application into the Windows **Open with** list as a per-user candidate (explicit, one-click removable, never setting the default) and see the current version with a link to the download page — the app never checks for updates over the network and never updates itself.
 - Accept file paths supplied by Windows Explorer or **Open with**, or dropped onto the application window; the portable build does not silently modify Windows associations.
 - Ship as a portable ZIP: extract it to a directory and run the executable without a traditional installer.
 
@@ -19,7 +20,7 @@ The first cycle targets Windows 10/11 x64 and uses the system WebView2 runtime r
 
 ## Release status
 
-`v0.1.0` was the completed `W-hrt-P1` baseline; `v0.2.0` added the multi-tab workspace, the read-only explorer sidebar and recent-file history (see [CHANGELOG](CHANGELOG.md) for the full release line). Every release carries automated build/test evidence, portable-archive smoke evidence and a recorded Windows regression baseline. The portable build deliberately does not install or silently change Windows file associations: use **Open with** to select the extracted executable. See [docs](docs/README.md) for public-facing project information, including the graded application boundary.
+`v0.1.0` was the completed `W-hrt-P1` baseline; `v0.2.0` added the multi-tab workspace, the read-only explorer sidebar and recent-file history; `v0.3.0` added the Settings panel with authorized "Open with" registration and the version/download-page info (see [CHANGELOG](CHANGELOG.md) for the full release line). Every release carries automated build/test evidence, portable-archive smoke evidence and a recorded Windows regression baseline. The portable build deliberately does not install or silently change Windows file associations: use **Open with** to select the extracted executable. See [docs](docs/README.md) for public-facing project information, including the graded application boundary.
 
 ## Build and portable package
 
