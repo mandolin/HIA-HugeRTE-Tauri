@@ -137,6 +137,14 @@ interface AppMenuItem {
 /** @lang zh-CN 应用级菜单定义（标签 + 菜单项）。 / @lang en Application menu definition (label + items). */
 interface AppMenu { label: string; items: () => AppMenuItem[]; }
 
+/** @lang zh-CN 统一的菜单下拉关闭：走面板自带的关闭器（摘监听 + 移除节点），无面板时为空操作。 / @lang en Unified dropdown close: delegates to the panel's own closer (detaches listeners and removes the node); a no-op when no panel is open. */
+function closeAppMenu(): void {
+  const openPanel = document.querySelector<HTMLElement & { __close?: () => void }>(".app-menu[data-owner]");
+  if (!openPanel) return;
+  if (openPanel.__close) openPanel.__close();
+  else openPanel.remove();
+}
+
 /**
  * @lang zh-CN
  * 应用级菜单栏（经典 Windows 外壳，2026-11-16 定案方案二）：文件/编辑/查看/插入/格式/工具/帮助。
@@ -234,16 +242,33 @@ function renderAppMenubar(): void {
       // 中文：再次点击同一菜单即收起（与 Windows 菜单行为一致）。
       // English: Clicking the same menu again collapses it (matching Windows behaviour).
       const openOwner = document.querySelector(".app-menu[data-owner]");
-      if (openOwner?.getAttribute("data-owner") === menu.label) { openOwner.remove(); return; }
-      openOwner?.remove();
+      if (openOwner?.getAttribute("data-owner") === menu.label) { closeAppMenu(); return; }
+      closeAppMenu();
       openAppMenu(menu, button);
+    });
+    // 中文：悬停切换（维护者 2026-11-16 反馈，经典 Windows 菜单行为）——**已有菜单展开时**，
+    //       鼠标移到相邻菜单上即自动切换到该菜单的下拉；菜单未展开时悬停不做任何事（不抢焦点、
+    //       不误开菜单）。用 `mouseenter` 而非 `mouseover`：每个菜单按钮只触发一次，避免子元素冒泡抖动。
+    // English: Hover switching (maintainer feedback 2026-11-16; classic Windows menu behaviour) —
+    //       **while a menu is already open**, moving the pointer onto an adjacent menu switches to that
+    //       menu's dropdown automatically; with nothing open, hovering does nothing (no focus steal, no
+    //       accidental opening). `mouseenter` (not `mouseover`) fires once per button, avoiding jitter
+    //       from child-element bubbling.
+    button.addEventListener("mouseenter", () => {
+      const openOwner = document.querySelector<HTMLElement>(".app-menu[data-owner]");
+      if (!openOwner || openOwner.getAttribute("data-owner") === menu.label) return;
+      // 中文：关闭旧下拉、打开新下拉，并把焦点留在菜单栏（便于继续用键盘）。
+      // English: Close the old dropdown, open the new one, and keep focus on the menu bar (so keyboard
+      //          navigation can continue).
+      closeAppMenu();
+      openAppMenu(menu, button, { focusFirstItem: false });
     });
     menubarElement.appendChild(button);
   }
 }
 
 /** @lang zh-CN 在给定菜单按钮下方打开下拉（定位用 fixed，随滚动不漂移）。 / @lang en Open a dropdown under the given menu button (fixed positioning; does not drift on scroll). */
-function openAppMenu(menu: AppMenu, anchor: HTMLElement): void {
+function openAppMenu(menu: AppMenu, anchor: HTMLElement, options: { focusFirstItem?: boolean } = {}): void {
   const panel = document.createElement("div");
   panel.className = "app-menu";
   panel.setAttribute("role", "menu");
@@ -289,12 +314,23 @@ function openAppMenu(menu: AppMenu, anchor: HTMLElement): void {
     document.removeEventListener("keydown", closeOnEscape, true);
     if (activeFloaterCloser === closeMenu) activeFloaterCloser = null;
   };
+  // 中文：把关闭器挂到面板上，供统一的 `closeAppMenu()` 调用——确保**任何**关闭路径都会摘掉监听器
+  //       （悬停切换若只 `panel.remove()`，旧面板的 mousedown/keydown 监听会残留并误关新菜单）。
+  // English: Attach the closer to the panel so the shared `closeAppMenu()` can invoke it — every close
+  //          path must detach the listeners (a bare `panel.remove()` during hover switching would leave
+  //          the old panel's mousedown/keydown listeners behind and mis-close the new menu).
+  (panel as HTMLElement & { __close?: () => void }).__close = closeMenu;
   document.addEventListener("mousedown", closeOnOutside, true);
   document.addEventListener("keydown", closeOnEscape, true);
   activeFloaterCloser = closeMenu;
-  // 中文：首项自动聚焦（键盘用户可直接方向键/回车）。
-  // English: Auto-focus the first item so keyboard users can continue immediately.
-  panel.querySelector<HTMLButtonElement>(".app-menu__item")?.focus();
+  // 中文：首项自动聚焦（键盘用户可直接方向键/回车）；悬停切换时**不**抢焦点，否则焦点会随鼠标
+  //       在菜单间跳动、并让后续悬停切换行为不自然。
+  // English: Auto-focus the first item so keyboard users can continue immediately; hover switching
+  //          does **not** steal focus — otherwise focus would jump around with the pointer and make
+  //          further hover switches feel wrong.
+  if (options.focusFirstItem !== false) {
+    panel.querySelector<HTMLButtonElement>(".app-menu__item")?.focus();
+  }
 }
 
 /** @lang zh-CN 执行编辑器命令（菜单转发的统一入口；编辑器未就绪时静默忽略）。 / @lang en Run an editor command (single funnel for menu forwarding; silently ignored when the editor is not ready). */
