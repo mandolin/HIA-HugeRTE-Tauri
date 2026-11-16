@@ -18,7 +18,7 @@ import "hugerte/plugins/table";
 import "hugerte/themes/silver";
 import "hugerte/skins/content/default/content";
 import "hugerte/skins/ui/oxide/skin";
-import { buildDiscardConfirmMessage, createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, type DocumentPayload, type DocumentState } from "./document";
+import { buildDiscardConfirmMessage, createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, splitDocumentParts, type DocumentPayload, type DocumentState } from "./document";
 import { appendDocumentTab, createUntitledTab, closeTab, MAX_TABS, overflowStartIndex, summarizeTabs, type TabState } from "./tabs";
 import {
   buildDefaultCharacterMap,
@@ -646,9 +646,17 @@ function renderTabStrip(): void {
 }
 
 function readEditorContent(): string {
+  // 中文：编辑器未就绪（初始化前）时 textarea 持有原始完整文本，直接返回。
+  // English: Before the editor is ready, the textarea holds the raw full text — return it as is.
+  if (!editor) return editorTarget.value;
   restoreOriginalAssets();
-  editor?.save();
-  return editor?.getContent() ?? editorTarget.value;
+  editor.save();
+  // 中文：编辑器只承载 body（缺陷修复 2026-11-17，ADR-0006）——按前缀/后缀不变量重组完整文档，
+  //       使保存/快照/源码视图始终拿到整页文本（doctype/head 不再丢失）。
+  // English: The editor carries only the body (defect fix 2026-11-17, ADR-0006) — reassemble the
+  //       full document via the prefix/suffix invariant so saving/snapshots/the source view always
+  //       observe the whole page (doctype/head no longer lost).
+  return state().documentPrefix + editor.getContent() + state().documentSuffix;
 }
 
 const ASSET_URL_SCHEME = /^(https?:|data:|asset:|blob:)/i;
@@ -685,7 +693,12 @@ async function rewriteRelativeAssetsInHtml(html: string, baseDir: string | null)
       }
     })
   );
-  return document.documentElement?.outerHTML ?? html;
+  // 中文：返回 body 内层 HTML——调用方（applyDocumentToEditor / 源码回写）注入编辑器的正是
+  //       body 段；编辑器不承载 doctype/head，故不返回 outerHTML（缺陷修复 2026-11-17，ADR-0006）。
+  // English: Return the body's inner HTML — the callers (applyDocumentToEditor / source apply-back)
+  //       inject exactly the body section into the editor; the editor never carries doctype/head,
+  //       so outerHTML is no longer returned (defect fix 2026-11-17, ADR-0006).
+  return document.body?.innerHTML ?? html;
 }
 
 /** 中文：保存前把内存中改写的显示 URL 还原为原始相对路径，确保磁盘文件不被改动。 */
@@ -708,7 +721,13 @@ async function applyDocumentToEditor(documentState: DocumentState): Promise<void
     editorTarget.value = documentState.content;
     return;
   }
-  const displayContent = await rewriteRelativeAssetsInHtml(documentState.content, documentState.baseDir);
+  // 中文：按前缀/后缀不变量切出 body 段注入编辑器（ADR-0006）——编辑器只承载 body，
+  //       doctype/head 由 DocumentState 缓存，往返时重组。
+  // English: Slice out the body section per the prefix/suffix invariant and inject it into the
+  //       editor (ADR-0006) — the editor carries only the body while doctype/head live in the
+  //       DocumentState caches and are reassembled on round-trips.
+  const bodyContent = documentState.content.slice(documentState.documentPrefix.length, documentState.content.length - documentState.documentSuffix.length);
+  const displayContent = await rewriteRelativeAssetsInHtml(bodyContent, documentState.baseDir);
   editor.setContent(displayContent);
   editor.undoManager.clear();
   editor.setDirty(false);
@@ -761,10 +780,15 @@ async function initializeEditor(): Promise<void> {
     setup(instance) {
       instance.on("Change Input Undo Redo", () => {
         if (isReplacingContent) return;
-        // 中文：编辑事件只作用于活动 Tab；把当前内容与脏标记写回该 Tab 的快照。
-        // English: Edit events affect only the active tab; write content and the dirty flag back
-        //       into that tab's snapshot.
-        replaceActiveDocument({ ...state(), content: instance.getContent(), dirty: true });
+        // 中文：编辑事件只作用于活动 Tab；编辑器只承载 body，故按前缀/后缀不变量重组完整文档
+        //       后写回快照（缺陷修复 2026-11-17，ADR-0006——此前直接存 getContent() 的 body 片段，
+        //       保存会丢失 doctype/head）。
+        // English: Edit events affect only the active tab; the editor carries only the body, so
+        //       reassemble the full document via the prefix/suffix invariant before writing the
+        //       snapshot (defect fix 2026-11-17, ADR-0006 — storing the bare getContent() fragment
+        //       previously lost doctype/head at save time).
+        const currentDocument = state();
+        replaceActiveDocument({ ...currentDocument, content: currentDocument.documentPrefix + instance.getContent() + currentDocument.documentSuffix, dirty: true });
         refreshDocumentHeader();
         // 中文：大纲/搜索随内容实时刷新（各自内部判断当前模式是否可见，不可见时零开销）；
         //       源码视图开启时镜像到源码框（源码框聚焦中则跳过，防 caret 冲突）。
@@ -1506,7 +1530,10 @@ async function saveDocument(forceSaveAs: boolean): Promise<void> {
     if (forceSaveAs || !state().path) {
       const result = await invoke<SaveResult | null>("save_document_as", { content, suggestedName: ensureHtmlExtension(getDocumentLabel(state().path)) });
       if (!result) return;
-      replaceActiveDocument({ content, path: result.path, dirty: false, baseDir: state().baseDir });
+      // 中文：整体展开既有状态——丢字段（如 documentPrefix/Suffix）会破坏重组不变量。
+      // English: Spread the existing state wholesale — dropping fields (e.g. documentPrefix/Suffix)
+      //       would break the reassembly invariant.
+      replaceActiveDocument({ ...state(), content, path: result.path, dirty: false });
     } else {
       await invoke("save_document", { path: state().path, content });
       replaceActiveDocument({ ...state(), content, dirty: false });
@@ -2557,10 +2584,16 @@ function applySourceTextToEditor(): Promise<void> {
   const text = sourceTextarea.value;
   const sequence = ++sourceApplySequence;
   isReplacingContent = true;
-  replaceActiveDocument({ ...state(), content: text, dirty: true });
+  // 中文：源码视图允许编辑 head/doctype——回写前对整页文本重新拆分，刷新前缀/后缀缓存
+  //       （保持「前缀+body+后缀 === content」不变量，ADR-0006）。
+  // English: The source view may edit head/doctype — re-split the full-page text on apply-back to
+  //       refresh the prefix/suffix caches (keeping the "prefix + body + suffix === content"
+  //       invariant, ADR-0006).
+  const parts = splitDocumentParts(text);
+  replaceActiveDocument({ ...state(), content: text, documentPrefix: parts.prefix, documentSuffix: parts.suffix, dirty: true });
   const run = async (): Promise<void> => {
     try {
-      const displayContent = await rewriteRelativeAssetsInHtml(text, state().baseDir);
+      const displayContent = await rewriteRelativeAssetsInHtml(parts.body, state().baseDir);
       // 中文：回写期间用户可能继续输入（新序号已开）——旧异步到此作废，避免整段覆盖新文本。
       // English: The user may keep typing during the write-back (a newer sequence exists) — the
       //          older async aborts here so it cannot overwrite the newer text wholesale.
