@@ -9,7 +9,8 @@ The `v0.2.0` portable release contains the following direct runtime components. 
 | Tauri JavaScript API | 2.11.1 | MIT OR Apache-2.0 | Local frontend bridge package. |
 | Tauri Dialog plugin | 2.7.2 | MIT OR Apache-2.0 | Native open/save dialog integration. |
 | serde_json (Rust) | 1.0.145 | MIT OR Apache-2.0 | Recent-file history persistence (added in v0.2.0). |
+| Tabler Icons | outline set, selection taken 2026-11-16 | MIT — Copyright (c) 2020-2026 Paweł Kuna | Application menu/toolbar icons, inlined as SVG path data in `src/ui/icons.ts` (no npm dependency, no font files). Source: https://github.com/tabler/tabler-icons. Icons used: file-plus, folder-open, device-floppy, file-download, history, layout-sidebar-left-collapse, layout-sidebar-left-expand, settings. |
 
-Microsoft Edge WebView2 Runtime is not included in the portable ZIP; it is a system dependency. The portable package includes no third-party fonts, images or copied reference-project assets.
+Microsoft Edge WebView2 Runtime is not included in the portable ZIP; it is a system dependency. The portable package includes no third-party fonts, images or copied reference-project assets other than the inlined Tabler icon path data listed above.
 
 The project source is distributed under the MIT License; see [LICENSE](LICENSE). This notice records direct runtime components of the portable release. Future releases must reconcile bundled transitive components and required notice text against their final artifacts.

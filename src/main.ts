@@ -29,6 +29,7 @@ import {
   HUGERTE_COMPATIBILITY_TOOLBAR
 } from "./editor/hugerte-compatibility-config";
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
+import { createIcon } from "./ui/icons";
 import "./styles.css";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -36,18 +37,16 @@ if (!app) throw new Error("无法初始化应用根节点。");
 
 app.innerHTML = `
   <main class="application-shell">
+    <!-- 中文：Banner（方案二定案，2026-11-16）——品牌 + 文档摘要，中央为未来模块预留位（综合搜索/命令框等），
+         右上仅设置齿轮。 @lang en Banner (option B, decided 2026-11-16) — brand + document summary;
+         the centre is reserved for future modules (combined search / command box); only the Settings gear on the right. -->
     <header class="app-header">
       <div class="app-brand"><span class="app-brand__mark" aria-hidden="true">H</span><div><h1>HIA HugeRTE</h1><p id="document-path">未命名文档</p></div></div>
-      <nav class="document-actions" aria-label="文档操作">
-        <button id="new-document" type="button" title="新建文档">新建</button>
-        <button id="open-document" type="button" title="打开 HTML 文件">打开</button>
-        <button id="save-document" type="button" title="保存当前文档">保存</button>
-        <button id="save-as-document" type="button" title="另存为 HTML 文件">另存为</button>
-        <button id="history-button" type="button" title="最近打开的文件">历史 ▾</button>
-        <button id="explorer-toggle" type="button" title="显示/隐藏目录树" aria-pressed="false">显示目录树</button>
-        <button id="settings-button" type="button" title="设置：打开方式与版本信息">设置 ▾</button>
-      </nav>
+      <div id="banner-reserved" class="app-banner__reserved" aria-hidden="true"></div>
+      <button id="settings-button" type="button" class="app-header__gear" title="设置" aria-label="设置"></button>
     </header>
+    <nav id="menubar" class="menubar" role="menubar" aria-label="主菜单"></nav>
+    <div id="toolbar" class="app-toolbar" role="toolbar" aria-label="文档操作"></div>
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
     <section class="editor-options" aria-label="编辑器设置"><label>编辑字号 <select id="editor-font-size"><option value="14px">14</option><option value="16px" selected>16</option><option value="18px">18</option><option value="20px">20</option></select></label><span id="document-status" role="status">准备就绪</span></section>
     <section class="editor-container">
@@ -92,9 +91,9 @@ const explorerPreview = requiredElement<HTMLDivElement>("#explorer-preview");
 const explorerBreadcrumb = requiredElement<HTMLElement>("#explorer-breadcrumb");
 const explorerUpButton = requiredElement<HTMLButtonElement>("#explorer-up");
 const explorerResizer = requiredElement<HTMLDivElement>("#explorer-resizer");
-const explorerToggleButton = requiredElement<HTMLButtonElement>("#explorer-toggle");
-const historyButton = requiredElement<HTMLButtonElement>("#history-button");
 const settingsButton = requiredElement<HTMLButtonElement>("#settings-button");
+const menubarElement = requiredElement<HTMLElement>("#menubar");
+const toolbarElement = requiredElement<HTMLElement>("#toolbar");
 const workbench = requiredElement<HTMLElement>("#workbench");
 const confirmScrim = requiredElement<HTMLDivElement>("#confirm-scrim");
 const confirmMessage = requiredElement<HTMLParagraphElement>("#confirm-message");
@@ -121,6 +120,267 @@ function requiredElement<T extends Element>(selector: string): T {
 }
 
 function setStatus(message: string): void { documentStatus.textContent = message; }
+
+/** @lang zh-CN 应用级菜单项定义：点击动作或调用子菜单构建函数（原型稿 2「文件」菜单定案，其余菜单为提案）。 / @lang en Application menu item: a click action or a submenu builder (the File menu is decided per prototype draft 2; the others are proposals). */
+interface AppMenuItem {
+  label: string;
+  shortcut?: string;
+  action: () => void;
+  /** 中文：true 时该项在菜单中渲染为分隔线（label/action 忽略）。 / English: When true the entry renders as a separator (label/action ignored). */
+  separator?: boolean;
+}
+
+/** @lang zh-CN 应用级菜单定义（标签 + 菜单项）。 / @lang en Application menu definition (label + items). */
+interface AppMenu { label: string; items: () => AppMenuItem[]; }
+
+/**
+ * @lang zh-CN
+ * 应用级菜单栏（经典 Windows 外壳，2026-11-16 定案方案二）：文件/编辑/查看/插入/格式/工具/帮助。
+ * 菜单内容——「文件」按定案稿实现（新建 Tab/打开/保存/另存为/清空历史 + 快捷键）；其余菜单在
+ * 本次实现中给出**保守提案**（仅收录已有能力，不凭空发明功能），待维护者逐项确认后调整。
+ * 交互：点击展开、点击外部或 Esc 关闭、点击项即执行并关闭；键盘可达（Tab 聚焦各菜单按钮，Enter 展开）。
+ * @lang en
+ * Application menu bar (classic Windows shell, option B decided 2026-11-16): File / Edit / View /
+ * Insert / Format / Tools / Help. The File menu follows the decided draft (new tab / open / save /
+ * save-as / clear history + shortcuts); the other menus contain **conservative proposals** in this
+ * pass (only existing capabilities — nothing invented) pending item-by-item confirmation. Behaviour:
+ * click to open, outside click or Esc closes, activating an item runs it and closes; keyboard
+ * reachable (Tab moves across the menu buttons, Enter opens).
+ */
+function renderAppMenubar(): void {
+  menubarElement.textContent = "";
+  /** @lang zh-CN 菜单集（按定案顺序；「编辑/插入/格式」当前为空提案占位——对应能力由编辑器内工具栏/HugeRTE 菜单承担）。 / @lang en Menu set in the decided order ("Edit/Insert/Format" are empty proposal placeholders — those capabilities live in the in-editor toolbar / HugeRTE menus). */
+  const menus: AppMenu[] = [
+    {
+      label: "文件",
+      items: () => [
+        { label: "新建 Tab", shortcut: "Ctrl+N", action: () => void createDocument() },
+        { label: "打开…", shortcut: "Ctrl+O", action: () => void openWithDialog() },
+        { label: "保存", shortcut: "Ctrl+S", action: () => void saveDocument(false) },
+        { label: "另存为…", action: () => void saveDocument(true) },
+        { separator: true, label: "", action: () => undefined },
+        { label: "最近打开…", action: () => void toggleHistoryMenu() },
+        { label: "清空历史…", action: () => void clearHistoryFromMenu() }
+      ]
+    },
+    {
+      label: "编辑",
+      items: () => [
+        { label: "撤销", shortcut: "Ctrl+Z", action: () => execEditorCommand("Undo") },
+        { label: "重做", shortcut: "Ctrl+Y", action: () => execEditorCommand("Redo") },
+        { separator: true, label: "", action: () => undefined },
+        { label: "查找与替换…", shortcut: "Ctrl+F", action: () => execEditorCommand("mceSearch") }
+      ]
+    },
+    {
+      label: "查看",
+      items: () => [
+        { label: "显示/隐藏目录树", action: () => toggleExplorerFromMenu() },
+        { label: "编辑字号…", action: () => fontSize.focus() },
+        { separator: true, label: "", action: () => undefined },
+        { label: "全屏（编辑器）", action: () => execEditorCommand("mceFullScreen") }
+      ]
+    },
+    {
+      label: "插入",
+      items: () => [
+        { label: "图片…", action: () => execEditorCommand("mceImage") },
+        { label: "链接…", action: () => execEditorCommand("mceLink") },
+        { label: "表格…", action: () => execEditorCommand("mceInsertTable") },
+        { label: "特殊字符…", action: () => execEditorCommand("mceShowCharmap") }
+      ]
+    },
+    {
+      label: "格式",
+      items: () => [
+        { label: "加粗", action: () => execEditorCommand("Bold") },
+        { label: "斜体", action: () => execEditorCommand("Italic") },
+        { label: "下划线", action: () => execEditorCommand("Underline") },
+        { separator: true, label: "", action: () => undefined },
+        { label: "清除格式", action: () => execEditorCommand("RemoveFormat") },
+        { label: "源代码", action: () => execEditorCommand("mceCodeEditor") }
+      ]
+    },
+    {
+      label: "工具",
+      items: () => [
+        { label: "设置…", action: () => void toggleSettingsPanel() },
+        { label: "打开方式注册…", action: () => void toggleSettingsPanel() },
+        { separator: true, label: "", action: () => undefined },
+        { label: "打开 Windows 默认应用设置", action: () => void openDefaultAppsSettingsFromMenu() }
+      ]
+    },
+    {
+      label: "帮助",
+      items: () => [
+        { label: "打开下载页", action: () => void openReleasesPageFromMenu() },
+        { label: "关于 HIA HugeRTE", action: () => setStatus("HIA HugeRTE — 基于 HugeRTE 与 Tauri 的便携 HTML 编辑器") }
+      ]
+    }
+  ];
+
+  for (const menu of menus) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "menubar__item";
+    button.setAttribute("role", "menuitem");
+    button.textContent = menu.label;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // 中文：再次点击同一菜单即收起（与 Windows 菜单行为一致）。
+      // English: Clicking the same menu again collapses it (matching Windows behaviour).
+      const openOwner = document.querySelector(".app-menu[data-owner]");
+      if (openOwner?.getAttribute("data-owner") === menu.label) { openOwner.remove(); return; }
+      openOwner?.remove();
+      openAppMenu(menu, button);
+    });
+    menubarElement.appendChild(button);
+  }
+}
+
+/** @lang zh-CN 在给定菜单按钮下方打开下拉（定位用 fixed，随滚动不漂移）。 / @lang en Open a dropdown under the given menu button (fixed positioning; does not drift on scroll). */
+function openAppMenu(menu: AppMenu, anchor: HTMLElement): void {
+  const panel = document.createElement("div");
+  panel.className = "app-menu";
+  panel.setAttribute("role", "menu");
+  panel.setAttribute("data-owner", menu.label);
+  for (const item of menu.items()) {
+    if (item.separator) {
+      const separator = document.createElement("div");
+      separator.className = "app-menu__sep";
+      panel.appendChild(separator);
+      continue;
+    }
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = "app-menu__item";
+    entry.setAttribute("role", "menuitem");
+    const label = document.createElement("span");
+    label.textContent = item.label;
+    entry.appendChild(label);
+    if (item.shortcut) {
+      const shortcut = document.createElement("span");
+      shortcut.className = "app-menu__shortcut";
+      shortcut.textContent = item.shortcut;
+      entry.appendChild(shortcut);
+    }
+    entry.addEventListener("click", () => { panel.remove(); item.action(); });
+    panel.appendChild(entry);
+  }
+  const rect = anchor.getBoundingClientRect();
+  panel.style.left = `${Math.round(rect.left)}px`;
+  panel.style.top = `${Math.round(rect.bottom + 2)}px`;
+  document.body.appendChild(panel);
+  // 中文：外点 / Esc 关闭（捕获级，一次注册、关闭时自移除）。
+  // English: Close on outside click / Esc (capture phase, registered once and removed on close).
+  const closeOnOutside = (event: MouseEvent): void => {
+    if (!panel.contains(event.target as Node)) closeMenu();
+  };
+  const closeOnEscape = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") { event.preventDefault(); closeMenu(); }
+  };
+  const closeMenu = (): void => {
+    panel.remove();
+    document.removeEventListener("mousedown", closeOnOutside, true);
+    document.removeEventListener("keydown", closeOnEscape, true);
+    if (activeFloaterCloser === closeMenu) activeFloaterCloser = null;
+  };
+  document.addEventListener("mousedown", closeOnOutside, true);
+  document.addEventListener("keydown", closeOnEscape, true);
+  activeFloaterCloser = closeMenu;
+  // 中文：首项自动聚焦（键盘用户可直接方向键/回车）。
+  // English: Auto-focus the first item so keyboard users can continue immediately.
+  panel.querySelector<HTMLButtonElement>(".app-menu__item")?.focus();
+}
+
+/** @lang zh-CN 执行编辑器命令（菜单转发的统一入口；编辑器未就绪时静默忽略）。 / @lang en Run an editor command (single funnel for menu forwarding; silently ignored when the editor is not ready). */
+function execEditorCommand(command: string): void {
+  editor?.execCommand(command);
+}
+
+/** @lang zh-CN 菜单「显示/隐藏目录树」：翻转显隐意愿并持久化（与工具栏按钮同一状态源）。 / @lang en Menu "show/hide tree": flips and persists the visibility intent (same state source as the toolbar button). */
+function toggleExplorerFromMenu(): void {
+  explorerHiddenByUser = !explorerHiddenByUser;
+  localStorage.setItem("hia-hugerte.explorer-hidden", explorerHiddenByUser ? "1" : "0");
+  updateExplorerVisibility();
+  renderAppToolbar();
+}
+
+/** @lang zh-CN 菜单「清空历史」：复用专用确认（与历史下拉同一路径）。 / @lang en Menu "clear history": reuses the dedicated confirmation (same path as the history dropdown). */
+async function clearHistoryFromMenu(): Promise<void> {
+  const confirmed = await confirmClearHistory();
+  if (!confirmed) return;
+  await invoke("recent_files_clear").catch(() => undefined);
+  setStatus("已清空历史记录");
+}
+
+/** @lang zh-CN 菜单「打开 Windows 默认应用设置」。 / @lang en Menu "open Windows default apps settings". */
+async function openDefaultAppsSettingsFromMenu(): Promise<void> {
+  try {
+    await invoke("open_default_apps_settings");
+    setStatus("已在系统「默认应用」设置中选择本程序");
+  } catch (error) {
+    setStatus(`打开系统设置失败：${formatError(error)}`);
+  }
+}
+
+/** @lang zh-CN 菜单「打开下载页」。 / @lang en Menu "open download page". */
+async function openReleasesPageFromMenu(): Promise<void> {
+  try {
+    await invoke<string>("open_releases_page");
+    setStatus("已在浏览器中打开下载页");
+  } catch (error) {
+    setStatus(`打开下载页失败：${formatError(error)}`);
+  }
+}
+
+/**
+ * @lang zh-CN
+ * 应用级工具栏（方案二定案）：新建/打开/保存/另存为/历史 ｜ 目录树（带 Tabler 图标，`src/ui/icons.ts`）。
+ * 按钮语义由 `title` + 可见文字承担（图标仅视觉提示）；目录树按钮反映当前显隐状态（`aria-pressed`）。
+ * 每次重绘以同步状态（如目录树显隐变化后）。
+ * @lang en
+ * Application toolbar (option B): new / open / save / save-as / history | tree (with Tabler icons from
+ * `src/ui/icons.ts`). Button semantics come from `title` plus visible text (icons are visual hints);
+ * the tree button reflects the current visibility via `aria-pressed`. It re-renders to stay in sync
+ * with state (e.g. after the tree is toggled elsewhere).
+ */
+function renderAppToolbar(): void {
+  toolbarElement.textContent = "";
+  /** @lang zh-CN 工具栏按钮定义（图标 + 文字 + 点击行为）。 / @lang en Toolbar button definition (icon + label + click handler). */
+  const buttons: Array<{ icon: Parameters<typeof createIcon>[0]; label: string; title: string; onClick: () => void; pressed?: boolean }> = [
+    { icon: "file-plus", label: "新建", title: "新建文档 (Ctrl+N)", onClick: () => void createDocument() },
+    { icon: "folder-open", label: "打开", title: "打开 HTML 文件 (Ctrl+O)", onClick: () => void openWithDialog() },
+    { icon: "device-floppy", label: "保存", title: "保存当前文档 (Ctrl+S)", onClick: () => void saveDocument(false) },
+    { icon: "file-download", label: "另存为", title: "另存为 HTML 文件", onClick: () => void saveDocument(true) },
+    { icon: "history", label: "历史", title: "最近打开的文件", onClick: () => void toggleHistoryMenu() },
+    { icon: "layout-sidebar-left-collapse", label: "目录树", title: "显示/隐藏目录树", onClick: () => toggleExplorerFromMenu(), pressed: !explorerHiddenByUser }
+  ];
+  buttons.forEach((definition, index) => {
+    // 中文：第 6 个按钮（目录树）前插入分隔线——与原型稿一致。
+    // English: Insert a separator before the sixth button (tree) — matching the prototype.
+    if (index === 5) {
+      const separator = document.createElement("span");
+      separator.className = "app-toolbar__sep";
+      toolbarElement.appendChild(separator);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "app-toolbar__btn";
+    button.title = definition.title;
+    // 中文：数据标记供浮层判定"点击入口按钮不触发外点关闭"（如历史下拉）。
+    // English: A data marker lets floaters exempt "click on its entry button" from outside-close
+    //          (e.g. the history dropdown).
+    if (definition.label === "历史") button.dataset.entry = "history";
+    if (definition.pressed !== undefined) button.setAttribute("aria-pressed", String(definition.pressed));
+    button.appendChild(createIcon(definition.pressed === false ? "layout-sidebar-left-expand" : definition.icon));
+    const label = document.createElement("span");
+    label.textContent = definition.label;
+    button.appendChild(label);
+    button.addEventListener("click", definition.onClick);
+    toolbarElement.appendChild(button);
+  });
+}
 
 /**
  * @lang zh-CN
@@ -596,6 +856,16 @@ async function toggleHistoryMenu(): Promise<void> {
     menu.appendChild(footer);
     menu.addEventListener("click", (event) => { if (event.target === menu) menu.remove(); });
     document.body.appendChild(menu);
+    // 中文：锚定到工具栏「历史」按钮下方（`W-hrt-P12` 后入口在工具栏，CSS 的固定 top/right 不再适用）。
+    // English: Anchor under the toolbar's History button (after `W-hrt-P12` the entry lives in the
+    //          toolbar, so the CSS fixed top/right no longer applies).
+    const historyEntry = toolbarElement.querySelector<HTMLElement>('[data-entry="history"]');
+    if (historyEntry) {
+      const entryRect = historyEntry.getBoundingClientRect();
+      menu.style.left = `${Math.round(entryRect.left)}px`;
+      menu.style.right = "auto";
+      menu.style.top = `${Math.round(entryRect.bottom + 2)}px`;
+    }
     // 中文：外点关闭（2026-11-14 维护者反馈修复——此前只有再点入口才会消失）。mousedown 捕获级
     //       监听：目标不在菜单内且不在入口按钮上（入口自身的切换由 click 处理，避免"关了又开"）
     //       即关闭。菜单经其他路径移除后，本监听会在下一次外点时自清理（对已脱离节点 no-op）。
@@ -606,7 +876,11 @@ async function toggleHistoryMenu(): Promise<void> {
     //       path, the listener self-cleans on the next outside mousedown (no-op on the detached node).
     const closeHistoryOnOutside = (event: MouseEvent): void => {
       const target = event.target as Node;
-      if (!menu.contains(target) && !historyButton.contains(target)) {
+      // 中文：入口判定作用在工具栏「历史」按钮上（`W-hrt-P12` 后入口从 Banner 移入工具栏）。
+      // English: The entry check targets the toolbar's History button (after `W-hrt-P12` the entry
+      //          moved from the Banner into the toolbar).
+      const entry = toolbarElement.querySelector<HTMLElement>('[data-entry="history"]');
+      if (!menu.contains(target) && !entry?.contains(target)) {
         closeHistoryMenu();
       }
     };
@@ -1043,9 +1317,10 @@ function updateExplorerVisibility(): void {
   const shouldShow = explorerRootPath !== "" && !explorerHiddenByUser;
   explorerPanel.hidden = !shouldShow;
   explorerResizer.hidden = !shouldShow;
-  explorerToggleButton.disabled = explorerRootPath === "";
-  explorerToggleButton.textContent = shouldShow ? "隐藏目录树" : "显示目录树";
-  explorerToggleButton.setAttribute("aria-pressed", String(shouldShow));
+  // 中文：显隐状态变化后同步工具栏的「目录树」按钮（图标形态 + aria-pressed）。
+  // English: After the visibility changes, keep the toolbar's tree button in sync (icon shape +
+  //          aria-pressed).
+  renderAppToolbar();
 }
 
 /**
@@ -1523,26 +1798,18 @@ async function openStartupDocuments(): Promise<void> {
   } catch (error) { setStatus(`启动文件打开失败：${formatError(error)}`); }
 }
 
-requiredElement<HTMLButtonElement>("#new-document").addEventListener("click", () => void createDocument());
-requiredElement<HTMLButtonElement>("#open-document").addEventListener("click", () => void openWithDialog());
-requiredElement<HTMLButtonElement>("#save-document").addEventListener("click", () => void saveDocument(false));
-requiredElement<HTMLButtonElement>("#save-as-document").addEventListener("click", () => void saveDocument(true));
-historyButton.addEventListener("click", () => void toggleHistoryMenu());
-// 中文：设置面板入口（ADR-0001 修订条目 1/2 的界面）。浏览器验证模式下按钮隐藏（无原生命令）。
-// English: Settings panel entry (the UI for ADR-0001 revision items 1/2). Hidden in browser
-//       verification mode (no native commands there).
+// 中文：应用级菜单栏与工具栏（`W-hrt-P12` 定案方案二）——顶部结构为 Banner / 菜单栏 / 工具栏 / Tab 条。
+//       齿轮图标作设置入口；文档操作全部由工具栏与「文件」菜单承担（Banner 内不再有按钮行）。
+// English: Application menu bar and toolbar (`W-hrt-P12`, decided option B) — the top structure is
+//       Banner / menu bar / toolbar / tab strip. The gear icon is the settings entry; all document
+//       actions live in the toolbar and the File menu (no button row inside the Banner any more).
+settingsButton.appendChild(createIcon("settings", 20));
 settingsButton.addEventListener("click", () => void toggleSettingsPanel());
+renderAppMenubar();
+renderAppToolbar();
 explorerUpButton.addEventListener("click", () => {
   const parent = parentPath(explorerRootPath);
   if (parent) void setExplorerRoot(parent);
-});
-// 中文：右上切换按钮——翻转显隐意愿并持久化（见 explorerHiddenByUser 的 ADR-0003 第 6 条说明）。
-// English: The top-right toggle — flips the show/hide intent and persists it (see the
-//       ADR-0003 §6 note on explorerHiddenByUser).
-explorerToggleButton.addEventListener("click", () => {
-  explorerHiddenByUser = !explorerHiddenByUser;
-  localStorage.setItem("hia-hugerte.explorer-hidden", explorerHiddenByUser ? "1" : "0");
-  updateExplorerVisibility();
 });
 // 中文：屏蔽外壳区域的 WebView2 默认右键菜单（维护者 2026-11-12 反馈）：外壳不是浏览器——
 //       返回/刷新/打印/另存为等动作与编辑器外壳语义冲突（「刷新」还会整页重载外壳丢状态）。
@@ -1625,10 +1892,11 @@ fontSize.addEventListener("change", applyEditorFontSize);
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
 if (!isTauriRuntime) {
-  // 中文：浏览器兼容性验证模式下无原生历史存储与设置命令，隐藏对应入口。
-  // English: No native history storage or settings commands in browser verification mode; hide those
-  //       entry points.
-  historyButton.hidden = true;
+  // 中文：浏览器兼容性验证模式下无原生历史存储与设置命令，隐藏设置齿轮（菜单/工具栏中的相应项
+  //       在点击时会自然失败并给出状态提示，不额外隐藏——保持结构可验证）。
+  // English: No native history storage or settings commands in browser verification mode, so hide
+  //       the settings gear (matching menu/toolbar entries simply fail with a status message when
+  //       clicked — they stay visible so the structure remains verifiable).
   settingsButton.hidden = true;
 }
 

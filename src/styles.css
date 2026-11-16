@@ -2,8 +2,50 @@
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 720px; height: 100%; margin: 0; }
 button, select { font: inherit; }
-.application-shell { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); height: 100%; }
+/* 中文：外壳栅格（`W-hrt-P12` 方案二定案）——按顶层子元素的实际顺序排列
+   （Banner / 菜单栏 / 工具栏 / Tab 条 / 选项行 / 编辑容器 / 确认遮罩）：前六行按内容高度，
+   编辑容器吃掉剩余高度（`minmax(0,1fr)`），确认遮罩行高 0（fixed 浮层，不占空间）。
+   行数必须与顶层子元素数量**逐一对齐**——错位会让弹性行落到错误的元素上并导致编辑区塌缩
+   （2026-11-16 实测：`editor-options` 拿到 540px、`editor-container` 只剩 98px）。
+   English: Shell grid (option B decided in `W-hrt-P12`) laid out in the exact top-level child
+   order (Banner / menu bar / toolbar / tab strip / options row / editor container / confirm
+   scrim): the first six rows size to content, the editor container takes the remaining height
+   (`minmax(0,1fr)`) and the scrim row is 0 (fixed overlay, no space). The row count must match
+   the top-level children one-to-one — a misalignment puts the flexible row on the wrong element
+   and collapses the editor (measured 2026-11-16: options row took 540px, editor container 98px). */
+.application-shell { display: grid; grid-template-rows: auto auto auto auto auto minmax(0, 1fr) 0; height: 100%; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; color: #fff; background: #034661; }
+/* 中文：Banner 中央预留位（未来综合搜索/命令输入框等模块），当前为空且不参与交互。
+   English: Banner centre reservation (future combined search / command box modules) — currently
+   empty and non-interactive. */
+.app-banner__reserved { flex: 1 1 auto; min-width: 2rem; }
+/* 中文：Banner 右上设置齿轮（唯一保留的 Banner 按钮）。
+   English: The Banner's settings gear (the only button left in the Banner). */
+.app-header__gear { display: inline-grid; place-items: center; flex: none; width: 2rem; height: 2rem; padding: 0; border: none; border-radius: .35rem; background: transparent; color: #fff; cursor: pointer; }
+.app-header__gear:hover, .app-header__gear:focus-visible { background: rgb(225 253 249 / 25%); }
+.app-header__gear[hidden] { display: none; }
+/* 中文：应用级菜单栏——经典 Windows 形态：一行文字菜单，点击展开下拉。
+   English: Application menu bar — classic Windows form: one row of text menus, click to open a dropdown. */
+.menubar { display: flex; align-items: center; gap: .05rem; padding: .18rem .5rem; background: #fff; border-bottom: 1px solid #e0e7ea; }
+.menubar__item { padding: .28rem .62rem; border: none; border-radius: .28rem; background: transparent; color: #15202b; font: inherit; font-size: .84rem; cursor: pointer; white-space: nowrap; }
+.menubar__item:hover, .menubar__item:focus-visible { background: #e1fdf9; color: #034661; outline: none; }
+/* 中文：下拉面板（fixed 定位，锚定在菜单按钮下方）。
+   English: Dropdown panel (fixed, anchored under the menu button). */
+.app-menu { position: fixed; z-index: 46; min-width: 13rem; max-height: 70vh; overflow-y: auto; padding: .25rem; display: grid; border: 1px solid #b8c7ce; border-radius: .4rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 22%); }
+.app-menu__item { display: flex; align-items: center; justify-content: space-between; gap: 1.2rem; padding: .32rem .55rem; border: none; border-radius: .28rem; background: transparent; color: #15202b; font: inherit; font-size: .82rem; text-align: left; cursor: pointer; }
+.app-menu__item:hover, .app-menu__item:focus-visible { background: #eef3f5; outline: none; }
+.app-menu__shortcut { color: #98a8b1; font-size: .74rem; white-space: nowrap; }
+.app-menu__sep { height: 1px; margin: .2rem .4rem; background: #eef2f4; }
+/* 中文：应用级工具栏——图标 + 文字按钮；分隔线与图标样式（Tabler Icons 内联 SVG，随文字色）。
+   English: Application toolbar — icon + text buttons; separator and icon styling (Tabler Icons
+   inline SVG, follows the text colour). */
+.app-toolbar { display: flex; align-items: center; gap: .1rem; padding: .22rem .45rem; background: #fff; border-bottom: 1px solid #e0e7ea; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.app-toolbar::-webkit-scrollbar { display: none; }
+.app-toolbar__btn { display: inline-flex; align-items: center; gap: .32rem; flex: none; padding: .28rem .5rem; border: none; border-radius: .3rem; background: transparent; color: #034661; font: inherit; font-size: .8rem; cursor: pointer; white-space: nowrap; }
+.app-toolbar__btn:hover, .app-toolbar__btn:focus-visible { background: #e1fdf9; outline: none; }
+.app-toolbar__btn[aria-pressed="false"] { color: #7d939f; }
+.app-toolbar__sep { flex: none; width: 1px; height: 1.15rem; margin: 0 .25rem; background: #d4dde1; }
+.app-icon { flex: none; display: block; }
 .app-brand { display: flex; min-width: 0; align-items: center; gap: .7rem; }
 .app-brand__mark { display: inline-grid; width: 2rem; height: 2rem; place-items: center; border-radius: .45rem; color: #034661; font-weight: 800; background: #e1fdf9; }
 .app-brand h1, .app-brand p { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }

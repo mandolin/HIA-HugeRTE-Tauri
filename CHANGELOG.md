@@ -4,7 +4,11 @@ All notable public changes will be documented in this file.
 
 ## Unreleased
 
-- The status bar count is now bilingual Chinese (字符 N · 词 N, characters + words) replacing the English N-words display; HugeRTE's built-in word segmentation counts each CJK character as a word.rn- Fixed floating surfaces (History dropdown, Settings panel, breadcrumb dropdown): they now close when clicking anywhere outside them — including clicks inside the editor area, which the previous implementation could not see (the editor iframe is a separate document). Clicking the entry button again still toggles them.
+- Added an application-level menu bar and toolbar (classic Windows shell layout, decided 2026-11-16): the banner keeps the brand and document summary with reserved space for future modules (combined search / command box) and only a Settings gear on the right; below it a menu bar (File / Edit / View / Insert / Format / Tools / Help — File menu as decided, the others conservative proposals) and a toolbar with icons (New / Open / Save / Save as / History | Tree).
+- Icons use Tabler Icons (MIT), inlined as SVG path data with no new dependency; see THIRD_PARTY_NOTICES.
+
+- The status bar count is now bilingual Chinese (字符 N · 词 N, characters + words) replacing the English N-words display; HugeRTE's built-in word segmentation counts each CJK character as a word.
+- Fixed floating surfaces (History dropdown, Settings panel, breadcrumb dropdown): they now close when clicking anywhere outside them — including clicks inside the editor area, which the previous implementation could not see (the editor iframe is a separate document). Clicking the entry button again still toggles them.
 
 ## v0.3.0 - 2026-11-13
 
