@@ -99,22 +99,81 @@ button, select { font: inherit; }
 /* English: Explorer sidebar (draft 2, W-hrt-P4 F1 / read-only ADR-0003): fixed width, scrolls
    itself; directory rows start with a real expand/collapse button (maintainer revision),
    keyboard-operable (Enter/Space). */
-/* 中文：侧栏 4 行网格——头部/面包屑行/树（吃掉剩余高度）/预览卡。行数必须等于子元素数，
-   否则面包屑会抢占弹性行悬在半空（2026-11-10 手测发现的布局缺陷）。
+/* 中文：侧栏两行网格（W-hrt-P14 F2 三态改造）——第一行为三态模式条，第二行为面板容器
+   （吃掉剩余高度）；三个视图面板叠放在容器内，靠 hidden 切换。原有 4 行结构（头部/面包屑/
+   树/预览）整体下沉为 files 面板的内部网格。
    列必须 minmax(0,1fr)（2026-11-12 深路径实测教训）：隐式 auto 列会被面包屑行的 max-content
    撑到容器外（实测 row=505 vs panel=260，行内容在 475px 的 nav 里完全放得下 → 滚轮守卫判
    "无溢出"而失效），可见截断实为 overflow:hidden 裁剪；minmax(0,1fr) 强制列宽=容器宽，
    行/导航随之收缩、overflow-x:auto 才真正可滚。 */
-/* English: The sidebar is a 4-row grid — head / breadcrumb row / tree (takes remaining height) /
-   preview card. The row count must match the child count, otherwise the breadcrumb steals the
-   flexible row and floats mid-panel (layout defect found in manual testing 2026-11-10).
+/* English: The sidebar is a 2-row grid (W-hrt-P14 F2 three-mode rework) — row 1 is the mode
+   strip, row 2 is the pane container (takes remaining height); the three view panes stack
+   inside the container and switch via hidden. The former 4-row structure (head / breadcrumb /
+   tree / preview) moved down wholesale into the files pane's internal grid.
    The column MUST be minmax(0,1fr) (measured lesson 2026-11-12 with deep paths): the implicit
    auto column is blown out to the breadcrumb row's max-content (measured row=505 vs panel=260;
    the content fits fully inside the 475px nav, so the wheel guard saw "no overflow" and died),
    and the visible truncation was just overflow:hidden clipping. minmax(0,1fr) pins the column to
    the container width so the row/nav shrink and overflow-x:auto actually scrolls. */
-.explorer { flex: 0 0 260px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; max-height: 100%; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; overflow: hidden; }
+.explorer { flex: 0 0 260px; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-height: 0; max-height: 100%; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; overflow: hidden; }
 .explorer[hidden] { display: none; }
+/* 中文：三态模式条（方案 B 定案：图标 + 文字）。flex-wrap:nowrap + 子项可收缩：空间不足时
+   文字按可用宽度自然省略（text-overflow），图标 flex:none 恒可见；title/aria-label 恒为全称。
+   English: The three-mode strip (decided option B: icon + text). flex-wrap:nowrap with
+   shrinkable children: when space runs out the labels ellipsize naturally by available width
+   (text-overflow) while icons (flex:none) stay visible; title/aria-label always carry the full
+   word. */
+.explorer__modes { display: flex; flex-wrap: nowrap; align-items: center; gap: .18rem; padding: .3rem .28rem; border-bottom: 1px solid #e0e7ea; }
+.explorer__mode { display: inline-flex; align-items: center; gap: .24rem; min-width: 0; flex: 0 1 auto; padding: .26rem .42rem; border: none; border-radius: .28rem; background: transparent; color: #425466; font: inherit; font-size: .76rem; cursor: pointer; white-space: nowrap; }
+.explorer__mode:hover, .explorer__mode:focus-visible { background: #eef3f5; color: #034661; outline: none; }
+.explorer__mode--active { background: #e1fdf9; color: #034661; font-weight: 600; }
+.explorer__mode-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 中文：三态面板容器与面板——容器吃满第二行，面板各自内部布局；[hidden] 用 display:none
+   覆盖 display:grid，保证只有活动面板参与布局。
+   English: The pane container and panes — the container fills row 2 and each pane lays out
+   internally; [hidden] uses display:none to override display:grid so only the active pane
+   participates in layout. */
+.explorer__panes { min-height: 0; min-width: 0; display: grid; }
+.explorer__pane { min-height: 0; min-width: 0; display: grid; }
+.explorer__pane[data-pane="files"] { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.explorer__pane--stack { grid-template-rows: auto minmax(0, 1fr); }
+.explorer__pane[hidden] { display: none; }
+/* 中文：文档大纲态（维护者 2026-11-16 定案：层级参考线 + 可折叠 + 点击跳转）。缩进与参考线
+   由 --outline-level（1–6）驱动：margin-left 随层级加深，border-left 画出每级纵向参考线
+   （同级行在相同 x 处连成一条线）。行语义与资源树一致（treeitem + Enter/Space）。 */
+/* English: The document outline (maintainer decision 2026-11-16: hierarchy guides +
+   collapsibility + click-to-jump). Indent and guides are driven by --outline-level (1–6):
+   margin-left deepens per level and border-left draws each level's vertical guide (rows of the
+   same level connect into one line at the same x). Row semantics match the explorer tree
+   (treeitem + Enter/Space). */
+.outline { min-height: 0; padding: .35rem .3rem; overflow: auto; font-size: .84rem; }
+.outline__row { --outline-level: 1; display: flex; align-items: center; gap: .35rem; margin-left: calc((var(--outline-level) - 1) * .85rem); padding: .22rem .4rem; border-left: 1px solid #e4eaed; border-radius: 0 .3rem .3rem 0; cursor: pointer; overflow: hidden; white-space: nowrap; }
+.outline__row:hover, .outline__row:focus-visible { background: #eef3f5; outline: none; }
+.outline__row > span:not(.outline__caret) { overflow: hidden; text-overflow: ellipsis; }
+.outline__caret { width: 1.15rem; flex: none; border: none; background: transparent; color: #7d939f; font-size: .72rem; cursor: pointer; padding: 0; }
+.outline__caret:hover, .outline__caret:focus-visible { color: #034661; }
+.outline__text { color: #15202b; }
+.outline__empty { padding: .3rem .5rem; color: #98a8b1; font-size: .8rem; }
+/* 中文：搜索态（维护者 2026-11-16 定案：所有已打开 Tab、按文件分组、行号 + 命中高亮）。
+   输入框占满可用宽度；结果按文件分组，命中行是可点击按钮（行号徽标 + 片段，mark 高亮）。
+   English: The search state (maintainer decision 2026-11-16: all open tabs, grouped by file,
+   line number + hit highlight). The input fills the available width; results group by file and
+   hit rows are clickable buttons (line badge + snippet with a mark highlight). */
+.explorer__search-bar { padding: .4rem .45rem .1rem; }
+.explorer__search-input { width: 100%; min-width: 0; padding: .3rem .5rem; border: 1px solid #d4dde1; border-radius: .3rem; background: #fff; color: #15202b; font: inherit; font-size: .8rem; }
+.explorer__search-input:focus-visible { outline: 2px solid #034661; outline-offset: -2px; }
+.explorer__search-results { min-height: 0; padding: .35rem .3rem; overflow: auto; font-size: .8rem; }
+.explorer__search-group { margin-bottom: .45rem; }
+.explorer__search-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: .4rem; padding: .2rem .3rem; color: #425466; font-weight: 600; }
+.explorer__search-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer__search-group-count { flex: none; color: #98a8b1; font-weight: 400; font-size: .72rem; white-space: nowrap; }
+.explorer__search-hit { display: flex; align-items: baseline; gap: .4rem; width: 100%; padding: .2rem .35rem; border: none; border-radius: .28rem; background: transparent; color: #15202b; font: inherit; font-size: .76rem; text-align: left; cursor: pointer; }
+.explorer__search-hit:hover, .explorer__search-hit:focus-visible { background: #eef3f5; outline: none; }
+.explorer__search-line { flex: none; min-width: 1.6rem; color: #98a8b1; font-size: .7rem; text-align: right; }
+.explorer__search-snippet { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer__search-snippet mark { padding: 0 .06rem; border-radius: .15rem; background: #ffe9a8; color: inherit; }
+.explorer__search-more { padding: .15rem .35rem; color: #98a8b1; font-size: .72rem; }
+.explorer__search-empty { padding: .3rem .5rem; color: #98a8b1; font-size: .8rem; }
 /* 中文：侧栏宽度分隔条（维护者 2026-11-10 需求）：自身 0.4rem 宽，负外边距恰好抵消两侧
    flex gap——视觉间距与无分隔条时一致（0.55rem），悬停/拖拽/键盘聚焦时显示高亮条；
    侧栏隐藏时随之消失。 */

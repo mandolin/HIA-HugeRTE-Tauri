@@ -29,7 +29,8 @@ import {
   HUGERTE_COMPATIBILITY_TOOLBAR
 } from "./editor/hugerte-compatibility-config";
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
-import { createIcon } from "./ui/icons";
+import { createIcon, type IconName } from "./ui/icons";
+import { scanContentLineHits } from "./ui/sidebar-search";
 import "./styles.css";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -53,14 +54,33 @@ app.innerHTML = `
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
     <section class="editor-container">
       <div id="workbench" class="workbench">
-        <aside id="explorer" class="explorer" aria-label="资源管理" hidden>
-          <div class="explorer__head"><span>资源管理 <span id="explorer-scope" class="explorer__scope"></span></span><button id="explorer-refresh" type="button" title="刷新目录树" class="explorer__refresh">⟳</button></div>
-          <div class="explorer__breadcrumb-row">
-            <button id="explorer-up" type="button" title="向上（浏览上一级目录）" class="explorer__up" aria-label="向上">↑</button>
-            <nav id="explorer-breadcrumb" class="explorer__breadcrumb" aria-label="目录路径"></nav>
+        <aside id="explorer" class="explorer" aria-label="文档侧栏" hidden>
+          <!-- 中文：侧栏三态入口条（W-hrt-P14 F2，方案 B 定案：图标 + 文字）。按钮由 renderSidebarModeStrip()
+               用 Tabler 图标构建；文字按可用宽度省略、图标恒可见（定案规则）。 -->
+          <!-- English: The sidebar three-mode entry strip (W-hrt-P14 F2, decided option B: icon + text).
+               Buttons are built by renderSidebarModeStrip() with Tabler icons; text ellipsizes by
+               available width while icons stay visible (the decided rules). -->
+          <div id="explorer-modes" class="explorer__modes" role="tablist" aria-label="侧栏视图"></div>
+          <div class="explorer__panes">
+            <div id="explorer-pane-files" class="explorer__pane" data-pane="files">
+              <div class="explorer__head"><span>资源管理 <span id="explorer-scope" class="explorer__scope"></span></span><button id="explorer-refresh" type="button" title="刷新目录树" class="explorer__refresh">⟳</button></div>
+              <div class="explorer__breadcrumb-row">
+                <button id="explorer-up" type="button" title="向上（浏览上一级目录）" class="explorer__up" aria-label="向上">↑</button>
+                <nav id="explorer-breadcrumb" class="explorer__breadcrumb" aria-label="目录路径"></nav>
+              </div>
+              <div id="explorer-tree" class="tree" role="tree"></div>
+              <div id="explorer-preview" class="explorer__preview" hidden></div>
+            </div>
+            <div id="explorer-pane-outline" class="explorer__pane explorer__pane--stack" data-pane="outline" hidden>
+              <div id="explorer-outline" class="outline" role="tree" aria-label="文档大纲"></div>
+            </div>
+            <div id="explorer-pane-search" class="explorer__pane explorer__pane--stack" data-pane="search" hidden>
+              <div class="explorer__search-bar">
+                <input id="explorer-search-input" class="explorer__search-input" type="search" placeholder="在所有打开的文档中查找…" aria-label="在所有打开的文档中查找" />
+              </div>
+              <div id="explorer-search-results" class="explorer__search-results"></div>
+            </div>
           </div>
-          <div id="explorer-tree" class="tree" role="tree"></div>
-          <div id="explorer-preview" class="explorer__preview" hidden></div>
         </aside>
         <div id="explorer-resizer" class="explorer__resizer" role="separator" aria-orientation="vertical" aria-label="调整资源管理器宽度" title="拖动调整资源管理器宽度（聚焦后可用左右方向键微调）" tabindex="0" hidden></div>
         <div class="editor-pane"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
@@ -95,6 +115,14 @@ const explorerPreview = requiredElement<HTMLDivElement>("#explorer-preview");
 const explorerBreadcrumb = requiredElement<HTMLElement>("#explorer-breadcrumb");
 const explorerUpButton = requiredElement<HTMLButtonElement>("#explorer-up");
 const explorerResizer = requiredElement<HTMLDivElement>("#explorer-resizer");
+/** @lang zh-CN 侧栏三态的容器与面板引用（模式条 + 三个视图面板 + 大纲/搜索控件）。 / @lang en References for the sidebar's three modes (mode strip, the three view panes, outline/search controls). */
+const explorerModes = requiredElement<HTMLElement>("#explorer-modes");
+const explorerPaneFiles = requiredElement<HTMLElement>("#explorer-pane-files");
+const explorerPaneOutline = requiredElement<HTMLElement>("#explorer-pane-outline");
+const explorerPaneSearch = requiredElement<HTMLElement>("#explorer-pane-search");
+const explorerOutline = requiredElement<HTMLDivElement>("#explorer-outline");
+const explorerSearchInput = requiredElement<HTMLInputElement>("#explorer-search-input");
+const explorerSearchResults = requiredElement<HTMLDivElement>("#explorer-search-results");
 const settingsButton = requiredElement<HTMLButtonElement>("#settings-button");
 const menubarElement = requiredElement<HTMLElement>("#menubar");
 const toolbarElement = requiredElement<HTMLElement>("#toolbar");
@@ -655,6 +683,13 @@ async function applyDocumentToEditor(documentState: DocumentState): Promise<void
   editor.setContent(displayContent);
   editor.undoManager.clear();
   editor.setDirty(false);
+  // 中文：文档内容整体换入（切 Tab/保存/替换）后同步侧栏大纲与搜索——两函数内部按当前模式
+  //       判定可见性，不可见时零开销。
+  // English: After a wholesale content swap (tab switch/save/replace), refresh the sidebar
+  //       outline and search — both check the current mode's visibility internally, costing
+  //       nothing while hidden.
+  refreshOutlineIfVisible();
+  refreshSearchIfVisible();
 }
 
 function applyEditorFontSize(): void {
@@ -702,6 +737,11 @@ async function initializeEditor(): Promise<void> {
         //       into that tab's snapshot.
         replaceActiveDocument({ ...state(), content: instance.getContent(), dirty: true });
         refreshDocumentHeader();
+        // 中文：大纲/搜索随内容实时刷新（各自内部判断当前模式是否可见，不可见时零开销）。
+        // English: Outline/search refresh live with the content (each internally checks whether
+        //       its mode is visible; zero cost while hidden).
+        refreshOutlineIfVisible();
+        refreshSearchIfVisible();
         setStatus("已修改，尚未保存");
       });
     }
@@ -1951,6 +1991,412 @@ async function showAssetPreview(absolutePath: string): Promise<void> {
 
 /**
  * @lang zh-CN
+ * 侧栏三态模式（W-hrt-P14 F2，调研报告 §4「一栏多态」结论 + 维护者 2026-11-16 定案）：
+ * `files` = 既有资源树（文件浏览），`outline` = 文档大纲（标题层级），`search` = 搜索结果
+ * （跨已打开 Tab）。当前版本无多语言机制，文字为中文；英文文案取最短词的适配规则
+ * （`Files / Outline / Search`）已随方案 B 定案登记，待多语言周期启用。
+ * @lang en
+ * Sidebar modes (W-hrt-P14 F2, per the survey §4 "one column, multiple states" conclusion and
+ * the maintainer's 2026-11-16 decision): `files` = the existing explorer tree, `outline` = the
+ * document heading outline, `search` = results across all open tabs. The current build has no
+ * i18n so labels are Chinese; the shortest-word English adaptation (`Files / Outline / Search`)
+ * is already registered with the option-B decision and awaits the i18n cycle.
+ */
+type SidebarMode = "files" | "outline" | "search";
+
+/** @lang zh-CN 侧栏模式持久化键（与目录树显隐、侧栏宽度同一 localStorage 机制）。 / @lang en Persistence key for the sidebar mode (same localStorage mechanism as tree visibility and sidebar width). */
+const SIDEBAR_MODE_KEY = "hia-hugerte.sidebar-mode";
+
+/** @lang zh-CN 模式条定义：图标 + 文字（方案 B 定案稿④：文案取最短词；title/aria-label 恒为全称）。 / @lang en Mode-strip definitions: icon + label (option-B final draft §4: shortest words; title/aria-label always carry the full word). */
+const SIDEBAR_MODE_DEFS: ReadonlyArray<{ mode: SidebarMode; icon: IconName; label: string }> = [
+  { mode: "files", icon: "folders", label: "资源" },
+  { mode: "outline", icon: "list", label: "大纲" },
+  { mode: "search", icon: "search", label: "搜索" }
+];
+
+/**
+ * @lang zh-CN
+ * 当前侧栏模式：从 localStorage 读取并在非法值时回落 `files`。持久化让"下次启动还在上次的
+ * 视图"（与侧栏宽度/显隐同一用户数据机制，ADR-0003 第 6 条精神）。
+ * @lang en
+ * The current sidebar mode: read from localStorage with `files` as the fallback for invalid
+ * values. Persisting means the next launch reopens the last view (same user-data mechanism as
+ * the sidebar width/visibility, in the spirit of ADR-0003 §6).
+ */
+let sidebarMode: SidebarMode = (() => {
+  const stored = localStorage.getItem(SIDEBAR_MODE_KEY);
+  return stored === "outline" || stored === "search" || stored === "files" ? stored : "files";
+})();
+
+/**
+ * @lang zh-CN
+ * 渲染侧栏模式条（方案 B 定案形态：`图标(flex:none) + 文字(min-width:0 省略)`、不换行）。
+ * 语义用 `role=tablist/tab` + `aria-selected`；文字仅在视觉上可能被省略，`title` 恒为全称。
+ * @lang en
+ * Render the sidebar mode strip (option-B final form: `icon (flex:none) + label (min-width:0,
+ * ellipsis)`, no wrapping). Semantics via `role=tablist/tab` + `aria-selected`; the label may be
+ * visually ellipsized but `title` always carries the full word.
+ */
+function renderSidebarModeStrip(): void {
+  explorerModes.textContent = "";
+  for (const definition of SIDEBAR_MODE_DEFS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "explorer__mode";
+    button.dataset.mode = definition.mode;
+    button.setAttribute("role", "tab");
+    button.title = definition.label;
+    button.setAttribute("aria-label", definition.label);
+    button.setAttribute("aria-selected", String(definition.mode === sidebarMode));
+    if (definition.mode === sidebarMode) button.classList.add("explorer__mode--active");
+    button.appendChild(createIcon(definition.icon));
+    const label = document.createElement("span");
+    label.className = "explorer__mode-text";
+    label.textContent = definition.label;
+    button.appendChild(label);
+    explorerModes.appendChild(button);
+  }
+}
+
+/**
+ * @lang zh-CN
+ * 应用当前侧栏模式到 DOM：切换三个面板的 `hidden`、同步模式条选中态；`outline`/`search`
+ * 模式在进入时各重渲染一次（保证内容与当前文档一致）。不写 localStorage（写入只发生在
+ * setSidebarMode 的用户切换路径，启动恢复不覆写已存值）。
+ * @lang en
+ * Apply the current sidebar mode to the DOM: toggle the three panes' `hidden`, sync the strip's
+ * selected states; the `outline`/`search` modes re-render once on entry (keeping their content
+ * consistent with the current document). No localStorage write — persisting happens only in the
+ * user-initiated setSidebarMode path, so startup restore never overwrites the stored value.
+ */
+function applySidebarMode(): void {
+  explorerPaneFiles.hidden = sidebarMode !== "files";
+  explorerPaneOutline.hidden = sidebarMode !== "outline";
+  explorerPaneSearch.hidden = sidebarMode !== "search";
+  for (const button of explorerModes.querySelectorAll<HTMLButtonElement>(".explorer__mode")) {
+    const active = button.dataset.mode === sidebarMode;
+    button.classList.toggle("explorer__mode--active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  if (sidebarMode === "outline") renderDocumentOutline();
+  if (sidebarMode === "search") runSidebarSearch();
+}
+
+/**
+ * @lang zh-CN
+ * 用户切换侧栏模式（模式条点击）：持久化意愿后应用；重复点击同一模式为空操作（避免无谓
+ * 重渲染打断搜索输入焦点）。
+ * @lang en
+ * Switch the sidebar mode by user action (mode-strip click): persist the choice, then apply;
+ * re-clicking the active mode is a no-op (avoids pointless re-renders disturbing search input
+ * focus).
+ */
+function setSidebarMode(mode: SidebarMode): void {
+  if (mode === sidebarMode) return;
+  sidebarMode = mode;
+  localStorage.setItem(SIDEBAR_MODE_KEY, mode);
+  applySidebarMode();
+}
+
+/** @lang zh-CN 大纲折叠集合：以**编辑器 body 内的活节点**为键（WeakSet）——输入时未改动的标题节点保持折叠状态，文档切换后旧节点被回收、状态自然失效。 / @lang en Outline collapse set keyed by the **live nodes in the editor body** (WeakSet) — untouched heading nodes keep their collapsed state while typing; after a document switch the old nodes are garbage-collected and their state expires naturally. */
+const outlineCollapsedNodes = new WeakSet<Element>();
+
+/** @lang zh-CN 大纲条目的中间形态：层级（1–6）、标题文本与对应的活节点（跳转用；编辑器未就绪时为 null，仅展示）。 / @lang en The intermediate outline entry: level (1–6), heading text and its live node (for jumping; null when the editor is not ready — display only). */
+interface OutlineEntry { level: number; text: string; node: Element | null; }
+
+/**
+ * @lang zh-CN
+ * 收集活动文档的标题大纲：优先取**编辑器 body 内的活节点**（`h1`–`h6`，文档序，跳转与折叠
+ * 状态都以同一节点对象为锚）；编辑器未就绪时回退为解析 `state().content`（只展示、不可跳转）。
+ * 空标题显示占位文案。依赖"Change/Input/Undo/Redo 后 state().content 与 body 同步"的既有事实。
+ * @lang en
+ * Collect the active document's heading outline: prefer the **live nodes in the editor body**
+ * (`h1`–`h6` in document order — jumps and collapse state anchor to the same node objects);
+ * when the editor is not ready, fall back to parsing `state().content` (display only, no jump).
+ * Empty headings show placeholder text. Relies on the existing invariant that state().content
+ * and the body stay in sync after Change/Input/Undo/Redo.
+ */
+function collectOutlineEntries(): OutlineEntry[] {
+  if (editor) {
+    return Array.from(editor.getBody().querySelectorAll("h1,h2,h3,h4,h5,h6"), (node) => ({
+      level: Number(node.tagName.charAt(1)),
+      text: (node.textContent ?? "").trim() || "（空标题）",
+      node
+    }));
+  }
+  // 中文：浏览器验证早期（编辑器尚未挂载）的兜底路径——解析静态内容，仅保证大纲可见。
+  // English: Fallback for the early browser-verification phase (editor not mounted yet) — parse
+  //          the static content so the outline is still visible.
+  const parsed = new DOMParser().parseFromString(state().content, "text/html");
+  return Array.from(parsed.querySelectorAll("h1,h2,h3,h4,h5,h6"), (node) => ({
+    level: Number(node.tagName.charAt(1)),
+    text: (node.textContent ?? "").trim() || "（空标题）",
+    node: null
+  }));
+}
+
+/**
+ * @lang zh-CN
+ * 渲染文档大纲（维护者 2026-11-16 定案：需要层级参考线与可折叠）：
+ * - 每行按标题层级缩进（CSS 变量 `--outline-level` 驱动缩进与参考线）；
+ * - 有下级标题的行渲染真实折叠按钮（`aria-expanded`），折叠状态存于 WeakSet；
+ * - 单击行跳转编辑器内对应标题（caret 置于标题开头并滚动到视野）；
+ * - 折叠父级时其所有后代行隐藏（按"最近的更小层级祖先"链推导）。
+ * @lang en
+ * Render the document outline (maintainer decision 2026-11-16: needs hierarchy guides and
+ * collapsibility):
+ * - rows indent by heading level (CSS variable `--outline-level` drives indent and guides);
+ * - rows with deeper headings render a real collapse button (`aria-expanded`); collapsed state
+ *   lives in the WeakSet;
+ * - clicking a row jumps to that heading in the editor (caret at the heading start, scrolled
+ *   into view);
+ * - a collapsed parent hides all its descendant rows (derived along the "nearest smaller-level
+ *   ancestor" chain).
+ */
+function renderDocumentOutline(): void {
+  explorerOutline.textContent = "";
+  const entries = collectOutlineEntries();
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "outline__empty";
+    empty.textContent = "文档没有标题（h1–h6），无法生成大纲";
+    explorerOutline.appendChild(empty);
+    return;
+  }
+  // 中文：折叠可见性推导——每项的"最近更小层级前项"是其父级；父级隐藏或折叠则本项隐藏。
+  //       标题数量级小（典型 < 100），O(n²) 回看足够且无额外数据结构。
+  // English: Collapsed-visibility derivation — for each entry the nearest previous entry with a
+  //          smaller level is its parent; a hidden or collapsed parent hides this entry. Heading
+  //          counts are small (typically < 100), so the O(n²) look-back suffices without extra
+  //          data structures.
+  const hiddenFlags: boolean[] = new Array(entries.length).fill(false);
+  for (let index = 1; index < entries.length; index += 1) {
+    let parentIndex = -1;
+    for (let lookback = index - 1; lookback >= 0; lookback -= 1) {
+      if (entries[lookback].level < entries[index].level) { parentIndex = lookback; break; }
+    }
+    // 中文：父级节点取局部变量——TS 对可变索引的属性收窄不跨表达式，局部化后 WeakSet.has 才可类型安全。
+    // English: Extract the parent node into a local — TS does not carry property narrowing across
+    //          expressions on a mutable index; the local makes WeakSet.has type-safe.
+    const parentNode = parentIndex >= 0 ? entries[parentIndex].node : null;
+    hiddenFlags[index] = parentIndex >= 0 && (hiddenFlags[parentIndex] || (parentNode !== null && outlineCollapsedNodes.has(parentNode)));
+  }
+  entries.forEach((entry, index) => {
+    if (hiddenFlags[index]) return;
+    // 中文：有下级 = 紧随其后的条目层级更深（大纲的直接子级），据此渲染折叠按钮或占位。
+    // English: Has children = the immediately following entry is deeper (a direct child in the
+    //          outline), which decides between a collapse button and a spacer.
+    const hasChildren = index + 1 < entries.length && entries[index + 1].level > entry.level;
+    const collapsed = entry.node !== null && outlineCollapsedNodes.has(entry.node);
+    const row = document.createElement("div");
+    row.className = "outline__row";
+    row.style.setProperty("--outline-level", String(entry.level));
+    row.setAttribute("role", "treeitem");
+    row.tabIndex = 0;
+    if (hasChildren) {
+      const caret = document.createElement("button");
+      caret.type = "button";
+      caret.className = "outline__caret";
+      caret.textContent = collapsed ? "▸" : "▾";
+      caret.title = collapsed ? "展开此节" : "折叠此节";
+      caret.setAttribute("aria-expanded", String(!collapsed));
+      caret.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (entry.node === null) return;
+        if (outlineCollapsedNodes.has(entry.node)) outlineCollapsedNodes.delete(entry.node);
+        else outlineCollapsedNodes.add(entry.node);
+        renderDocumentOutline();
+      });
+      row.appendChild(caret);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "outline__caret";
+      row.appendChild(spacer);
+    }
+    const label = document.createElement("span");
+    label.className = "outline__text";
+    label.textContent = entry.text;
+    label.title = entry.text;
+    row.appendChild(label);
+    const jump = (): void => { if (entry.node) jumpToHeading(entry.node); };
+    row.addEventListener("click", jump);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); jump(); }
+    });
+    explorerOutline.appendChild(row);
+  });
+}
+
+/**
+ * @lang zh-CN
+ * 跳转到编辑器内的标题节点：直接把 Range 设在标题元素内部起点（`(node, 0)`）——caret 落在
+ * 标题**内部**，继续输入会写进标题（实测教训：`select(node)`/`select(node, false)` 的折叠点
+ * 落在父级的标题之前，输入会插到标题外）。随后滚动该标题进入视野并聚焦编辑器。
+ * @lang en
+ * Jump to a heading node in the editor: place the Range directly at the heading element's
+ * internal start (`(node, 0)`) so the caret sits **inside** the heading and typing continues
+ * within it (measured lesson: the collapse points of `select(node)` / `select(node, false)` land
+ * in the parent before the node, so typing would insert outside the heading). Then scroll the
+ * heading into view and focus the editor.
+ */
+function jumpToHeading(node: Element): void {
+  if (!editor) return;
+  editor.focus();
+  const ownerDocument = node.ownerDocument ?? document;
+  const range = ownerDocument.createRange();
+  range.setStart(node, 0);
+  range.collapse(true);
+  editor.selection.setRng(range);
+  editor.selection.scrollIntoView();
+}
+
+/** @lang zh-CN 大纲模式可见时重渲染（编辑事件与文档切换的统一刷新入口；不可见时零开销）。 / @lang en Re-render when the outline mode is visible (the unified refresh entry for edit events and document switches; zero cost while hidden). */
+function refreshOutlineIfVisible(): void {
+  if (sidebarMode === "outline") renderDocumentOutline();
+}
+
+/** @lang zh-CN 搜索面板的单文件命中行上限（超出以"仅显示前 N 行命中"提示，避免长文档刷爆面板）。 / @lang en Per-file hit-row cap for the search panel (excess shows a "first N rows" notice so a long document cannot flood the panel). */
+const SEARCH_MAX_HITS_PER_FILE = 20;
+
+/**
+ * @lang zh-CN
+ * 渲染侧栏搜索结果（维护者 2026-11-16 定案：范围为**所有已打开 Tab**；全局搜索另列后期）。
+ * 对每个 Tab 的 `document.content` 做纯扫描（`scanContentLineHits`，行号 = HTML 源码行，与
+ * F1 源码视图同坐标系），按文件分组展示：组头为文件名 + 命中行数；命中行展示"行号 + 上下文
+ * 片段（命中高亮）"。单击命中行：切换到该 Tab 并尝试把命中定位到编辑器正文（caret + 滚动）；
+ * 命中不在正文文本（标签/属性）时仅切换并说明。活动 Tab 的 content 由编辑事件实时同步，
+ * 后台 Tab 的 content 在切离时快照，二者均可直接扫描。
+ * @lang en
+ * Render the sidebar search results (maintainer decision 2026-11-16: scope = **all open tabs**;
+ * a global search stays deferred). Each tab's `document.content` is scanned purely
+ * (`scanContentLineHits`; line numbers = HTML source lines, the same coordinate system as the
+ * F1 source view) and grouped by file: the group head shows the file name plus hit count, and
+ * each hit row shows "line number + context snippet (match highlighted)". Clicking a hit row
+ * switches to that tab and tries to reveal the match in the editor body (caret + scroll); when
+ * the match lives in tags/attributes rather than body text, the tab switches with an
+ * explanatory status. The active tab's content is synced live by edit events and background
+ * tabs snapshot theirs on switch-away, so both are directly scannable.
+ */
+function runSidebarSearch(): void {
+  explorerSearchResults.textContent = "";
+  const query = explorerSearchInput.value;
+  // 中文：空查询显示引导文案（不显示"未找到"，避免误解为搜索无果）。
+  // English: A blank query shows the guidance text (not "no results", which would imply a real
+  //          search came up empty).
+  if (query.trim().length === 0) {
+    const hint = document.createElement("div");
+    hint.className = "explorer__search-empty";
+    hint.textContent = "输入关键字，在所有打开的文档中查找";
+    explorerSearchResults.appendChild(hint);
+    return;
+  }
+  let groupsWithHits = 0;
+  tabs.forEach((tab, index) => {
+    const scan = scanContentLineHits(tab.document.content, query, SEARCH_MAX_HITS_PER_FILE);
+    if (scan.hits.length === 0) return;
+    groupsWithHits += 1;
+    const group = document.createElement("div");
+    group.className = "explorer__search-group";
+    const head = document.createElement("div");
+    head.className = "explorer__search-group-head";
+    const name = document.createElement("span");
+    name.className = "explorer__search-group-name";
+    name.textContent = `${index === activeIndex ? "● " : ""}${getDocumentLabel(tab.document.path)}`;
+    name.title = getDocumentLabel(tab.document.path);
+    const count = document.createElement("span");
+    count.className = "explorer__search-group-count";
+    count.textContent = scan.truncated ? `${scan.hits.length}+ 行` : `${scan.hits.length} 行`;
+    head.append(name, count);
+    group.appendChild(head);
+    for (const hit of scan.hits) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "explorer__search-hit";
+      const lineBadge = document.createElement("span");
+      lineBadge.className = "explorer__search-line";
+      lineBadge.textContent = String(hit.line);
+      const snippet = document.createElement("span");
+      snippet.className = "explorer__search-snippet";
+      // 中文：片段用 textContent/mark 三段拼装——不拼 HTML，杜绝把文档内容当标记注入。
+      // English: The snippet assembles three text-bearing parts (textContent/mark) — no HTML
+      //          concatenation, so document content can never be injected as markup.
+      if (hit.before) snippet.appendChild(document.createTextNode(hit.before));
+      const mark = document.createElement("mark");
+      mark.textContent = hit.match;
+      snippet.appendChild(mark);
+      if (hit.after) snippet.appendChild(document.createTextNode(hit.after));
+      row.append(lineBadge, snippet);
+      row.addEventListener("click", () => {
+        // 中文：跳转 = 切换 Tab + 正文定位；先切 Tab（异步换内容），再找正文文本命中。
+        // English: Jump = switch tab + reveal in body; switch first (async content swap), then
+        //          look for the match inside the body text.
+        void switchToTab(index).then(() => {
+          const revealed = revealFirstTextMatch(query);
+          setStatus(revealed ? `已定位第 ${hit.line} 行命中（源码行号）` : "已切换文档；该命中位于标签或属性中，未定位正文");
+        });
+      });
+      group.appendChild(row);
+    }
+    if (scan.truncated) {
+      const more = document.createElement("div");
+      more.className = "explorer__search-more";
+      more.textContent = `仅显示前 ${SEARCH_MAX_HITS_PER_FILE} 行命中`;
+      group.appendChild(more);
+    }
+    explorerSearchResults.appendChild(group);
+  });
+  if (groupsWithHits === 0) {
+    const empty = document.createElement("div");
+    empty.className = "explorer__search-empty";
+    empty.textContent = "未找到命中";
+    explorerSearchResults.appendChild(empty);
+  }
+}
+
+/**
+ * @lang zh-CN
+ * 在编辑器正文中查找查询的首个文本命中并定位：遍历 body 的文本节点（大小写不敏感），
+ * 命中后聚焦编辑器、用原生 Range 选中文本并滚动到视野。仅匹配**正文文本**——标签名/属性值
+ * 中的命中定位不到（调用方据此给出说明性状态）。
+ * @lang en
+ * Find the first text hit of the query in the editor body and reveal it: walk the body's text
+ * nodes (case-insensitive); on a hit, focus the editor, select the text with a native Range and
+ * scroll it into view. Only **body text** matches — hits inside tag names/attribute values
+ * cannot be revealed (the caller explains that in the status line).
+ */
+function revealFirstTextMatch(query: string): boolean {
+  if (!editor) return false;
+  const trimmed = query.trim();
+  if (trimmed.length === 0) return false;
+  const body = editor.getBody();
+  const ownerDocument = body.ownerDocument ?? document;
+  const walker = ownerDocument.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const lowerQuery = trimmed.toLowerCase();
+  for (let current = walker.nextNode(); current !== null; current = walker.nextNode()) {
+    const text = current.nodeValue ?? "";
+    const at = text.toLowerCase().indexOf(lowerQuery);
+    if (at < 0) continue;
+    // 中文：先聚焦再设选区（聚焦可能重置选区），最后滚动——顺序保证定位稳定。
+    // English: Focus first, then set the selection (focusing may reset it), scroll last — the
+    //          order keeps the reveal stable.
+    editor.focus();
+    const range = ownerDocument.createRange();
+    range.setStart(current, at);
+    range.setEnd(current, at + trimmed.length);
+    editor.selection.setRng(range);
+    editor.selection.scrollIntoView();
+    return true;
+  }
+  return false;
+}
+
+/** @lang zh-CN 搜索模式可见时重扫（编辑事件与文档切换的统一刷新入口；保留输入框内容与焦点）。 / @lang en Re-scan when the search mode is visible (the unified refresh entry for edit events and document switches; keeps the input's value and focus). */
+function refreshSearchIfVisible(): void {
+  if (sidebarMode === "search") runSidebarSearch();
+}
+
+/**
+ * @lang zh-CN
  * 启动参数多文件（ADR-0005 第 3 条）：全部开为 Tab（首个活动），解除初版"仅开第一个"限制；
  * 达上限时对剩余文件提示。
  * @lang en
@@ -1997,6 +2443,26 @@ settingsButton.addEventListener("click", () => void toggleSettingsPanel());
 applyUiFontScale(localStorage.getItem(UI_FONT_SCALE_KEY) ?? "1");
 renderAppMenubar();
 renderAppToolbar();
+// 中文：侧栏三态（W-hrt-P14 F2）——渲染模式条、恢复持久化模式，并绑定切换与搜索输入事件。
+// English: Sidebar three modes (W-hrt-P14 F2) — render the mode strip, restore the persisted
+//       mode, and bind the switch and search-input events.
+renderSidebarModeStrip();
+applySidebarMode();
+explorerModes.addEventListener("click", (event) => {
+  // 中文：closest 取按钮（点击落在图标/文字子元素上也能命中）；dataset.mode 缺失时忽略。
+  // English: closest() reaches the button even when the click lands on the icon/label child;
+  //          a missing dataset.mode is ignored.
+  const target = (event.target as HTMLElement).closest<HTMLElement>(".explorer__mode");
+  if (target?.dataset.mode === "files" || target?.dataset.mode === "outline" || target?.dataset.mode === "search") {
+    setSidebarMode(target.dataset.mode);
+  }
+});
+// 中文：搜索输入即扫（scanContentLineHits 为线性纯扫描，20 个 Tab 内可接受；如后续大文档
+//       造成卡顿再引入节流——记录为已知取舍）。
+// English: Scan as the user types (scanContentLineHits is a linear pure scan, acceptable for up
+//          to 20 tabs; add throttling later only if large documents stutter — a recorded
+//          trade-off).
+explorerSearchInput.addEventListener("input", () => refreshSearchIfVisible());
 explorerUpButton.addEventListener("click", () => {
   const parent = parentPath(explorerRootPath);
   if (parent) void setExplorerRoot(parent);
