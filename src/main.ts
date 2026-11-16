@@ -125,7 +125,97 @@ function requiredElement<T extends Element>(selector: string): T {
 
 function setStatus(message: string): void { documentStatus.textContent = message; }
 
-/** @lang zh-CN 应用级菜单项定义：点击动作或调用子菜单构建函数（原型稿 2「文件」菜单定案，其余菜单为提案）。 / @lang en Application menu item: a click action or a submenu builder (the File menu is decided per prototype draft 2; the others are proposals). */
+/** @lang zh-CN 界面字号缩放比例的持久化键（`W-hrt-P12`；仅影响外壳，不影响编辑器正文）。 / @lang en Persistence key for the interface font scale (`W-hrt-P12`; shell only, never the editor body). */
+const UI_FONT_SCALE_KEY = "hia-hugerte.ui-font-scale";
+
+/**
+ * @lang zh-CN
+ * 应用界面字号缩放：写根元素内联变量 `--app-ui-font-scale`，外壳各处尺寸由 em 派生故整体缩放；
+ * 编辑器正文（HugeRTE iframe）不受影响——它由「编辑字号」单独控制（维护者 2026-11-16 澄清）。
+ * 非法值回落到标准比例（1）。
+ * @lang en
+ * Apply the interface font scale: writes the root element's inline `--app-ui-font-scale`; shell sizes
+ * derive from em so the whole chrome scales. The editor body (HugeRTE iframe) is unaffected — it is
+ * controlled separately by "editor font size" (maintainer clarification 2026-11-16). Invalid values
+ * fall back to the standard scale (1).
+ */
+function applyUiFontScale(scale: string): void {
+  const numeric = Number(scale);
+  const safeScale = Number.isFinite(numeric) && numeric >= 0.75 && numeric <= 1.5 ? numeric : 1;
+  document.documentElement.style.setProperty("--app-ui-font-scale", String(safeScale));
+  localStorage.setItem(UI_FONT_SCALE_KEY, String(safeScale));
+}
+
+/**
+ * @lang zh-CN
+ * 「关于」窗口（维护者 2026-11-16 要求：与多数 Windows 程序一致，弹出小窗展示）。内容：程序名、
+ * 版本、技术底座与许可、隐私边界一句话。复用确认模态的遮罩/卡片视觉语言，独立 DOM 不与确认流程
+ * 互斥；Esc / 「关闭」/ 点击遮罩关闭，焦点回到触发元素。
+ * @lang en
+ * The About window (maintainer request 2026-11-16: a small dialog like most Windows programs). Shows
+ * the product name, version, technical base and licence, plus a one-line privacy boundary. Reuses the
+ * confirm modal's scrim/card visual language but has its own DOM so it never conflicts with the
+ * confirm flow; closes on Esc / "Close" / scrim click, restoring focus to the trigger.
+ */
+async function showAboutDialog(): Promise<void> {
+  /** @lang zh-CN 版本号来自 Rust 编译期常量（零网络）；取不到时显示占位。 / @lang en The version comes from Rust's compile-time constant (zero network); a placeholder shows if unavailable. */
+  let version = "—";
+  try {
+    const info = await invoke<AppVersionInfoPayload>("app_version_info");
+    version = info.version;
+  } catch {
+    version = "—";
+  }
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const scrim = document.createElement("div");
+  scrim.className = "confirm-scrim confirm-scrim--active about-scrim";
+  scrim.setAttribute("role", "presentation");
+  const card = document.createElement("div");
+  card.className = "confirm-card about-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-modal", "true");
+  card.setAttribute("aria-labelledby", "about-title");
+  const title = document.createElement("h2");
+  title.id = "about-title";
+  title.textContent = "HIA HugeRTE";
+  const lines = document.createElement("div");
+  lines.className = "about-card__lines";
+  for (const line of [
+    `版本 ${version}`,
+    "基于 HugeRTE 与 Tauri 的 Windows 便携 HTML 编辑器",
+    "MIT 许可证；第三方组件与图标许可见 THIRD_PARTY_NOTICES",
+    "本地编辑：不联网检查更新，不上传文档内容"
+  ]) {
+    const row = document.createElement("p");
+    row.textContent = line;
+    lines.appendChild(row);
+  }
+  const actions = document.createElement("div");
+  actions.className = "confirm-actions";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "btn-primary";
+  close.textContent = "关闭";
+  actions.appendChild(close);
+  card.append(title, lines, actions);
+  scrim.appendChild(card);
+  document.body.appendChild(scrim);
+  /** @lang zh-CN 关闭并恢复焦点（唯一出口，避免监听器残留）。 / @lang en Close and restore focus (single exit, no listener leaks). */
+  const dismiss = (): void => {
+    scrim.remove();
+    window.removeEventListener("keydown", onKeyDown, true);
+    previousActive?.focus();
+  };
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); dismiss(); }
+  };
+  close.addEventListener("click", dismiss);
+  scrim.addEventListener("mousedown", (event) => { if (event.target === scrim) dismiss(); });
+  window.addEventListener("keydown", onKeyDown, true);
+  close.focus();
+}
+
+/** @lang zh-CN 应用级菜单项定义：点击动作或分隔线（原型稿 2「文件」菜单定案，其余菜单为提案）。 / @lang en Application menu item: a click action or a separator (the File menu is decided per prototype draft 2; the others are proposals). */
 interface AppMenuItem {
   label: string;
   shortcut?: string;
@@ -226,7 +316,7 @@ function renderAppMenubar(): void {
       label: "帮助",
       items: () => [
         { label: "打开下载页", action: () => void openReleasesPageFromMenu() },
-        { label: "关于 HIA HugeRTE", action: () => setStatus("HIA HugeRTE — 基于 HugeRTE 与 Tauri 的便携 HTML 编辑器") }
+        { label: "关于 HIA HugeRTE", action: () => void showAboutDialog() }
       ]
     }
   ];
@@ -1107,16 +1197,38 @@ async function toggleSettingsPanel(): Promise<void> {
   });
   panel.appendChild(assocSection);
 
-  // 中文：编辑器外观区——编辑字号（自原独立选项行移入，`W-hrt-P12`）；字号变更即时作用于编辑器并持久化。
-  // English: Editor appearance section — editor font size (moved here from the former standalone options
-  //          row in `W-hrt-P12`); changes apply immediately and persist.
+  // 中文：编辑器外观区——**界面字号**（外壳：菜单/工具栏/面板）与**编辑字号**（编辑器正文）分开。
+  //       维护者 2026-11-16 澄清：界面字号不得改动编辑器内文字。两者各自持久化。
+  // English: Editor appearance — **interface font size** (shell: menu/toolbar/panels) and **editor font
+  //          size** (editor body) are separate. Maintainer clarification 2026-11-16: the interface size
+  //          must never change the editor's text. Each persists independently.
   const appearanceSection = document.createElement("div");
   appearanceSection.className = "settings-panel__section";
   const appearanceTitle = document.createElement("div");
   appearanceTitle.className = "settings-panel__title";
-  appearanceTitle.textContent = "编辑器外观";
+  appearanceTitle.textContent = "界面与编辑器";
   const appearanceRow = document.createElement("div");
   appearanceRow.className = "settings-panel__row";
+
+  // 中文：界面字号——写根内联变量，仅缩放外壳（em 派生），不影响 iframe 内正文。
+  // English: Interface size — writes the root inline variable; scales only the shell (em-derived) and
+  //          never the iframe content.
+  const uiSizeLabel = document.createElement("label");
+  uiSizeLabel.className = "settings-panel__state";
+  uiSizeLabel.textContent = "界面字号 ";
+  const uiSizeSelect = document.createElement("select");
+  for (const [value, text] of [["1", "标准"], ["1.125", "较大"], ["1.25", "大"], ["0.9", "紧凑"]] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    uiSizeSelect.appendChild(option);
+  }
+  uiSizeSelect.value = localStorage.getItem(UI_FONT_SCALE_KEY) ?? "1";
+  uiSizeSelect.addEventListener("change", () => applyUiFontScale(uiSizeSelect.value));
+  uiSizeLabel.appendChild(uiSizeSelect);
+
+  // 中文：编辑字号——只作用于编辑器正文（HugeRTE iframe body）。
+  // English: Editor size — applies only to the editor body (HugeRTE iframe body).
   const fontSizeLabel = document.createElement("label");
   fontSizeLabel.className = "settings-panel__state";
   fontSizeLabel.textContent = "编辑字号 ";
@@ -1132,7 +1244,8 @@ async function toggleSettingsPanel(): Promise<void> {
   fontSize.value = savedSize && Array.from(fontSize.options).some((o) => o.value === savedSize) ? savedSize : "16px";
   fontSize.addEventListener("change", applyEditorFontSize);
   fontSizeLabel.appendChild(fontSize);
-  appearanceRow.appendChild(fontSizeLabel);
+
+  appearanceRow.append(uiSizeLabel, fontSizeLabel);
   appearanceSection.append(appearanceTitle, appearanceRow);
   panel.appendChild(appearanceSection);
 
@@ -1878,6 +1991,10 @@ async function openStartupDocuments(): Promise<void> {
 //       actions live in the toolbar and the File menu (no button row inside the Banner any more).
 settingsButton.appendChild(createIcon("settings", 20));
 settingsButton.addEventListener("click", () => void toggleSettingsPanel());
+// 中文：启动时应用持久化的界面字号（只影响外壳）。编辑器正文字号在编辑器初始化后单独应用。
+// English: Apply the persisted interface font scale at startup (shell only). The editor body size is
+//          applied separately after the editor initialises.
+applyUiFontScale(localStorage.getItem(UI_FONT_SCALE_KEY) ?? "1");
 renderAppMenubar();
 renderAppToolbar();
 explorerUpButton.addEventListener("click", () => {

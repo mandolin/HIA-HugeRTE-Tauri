@@ -1,4 +1,13 @@
 :root { font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif; color: #15202b; background: #f5f7f8; font-synthesis: none; }
+/* 中文：界面字号（维护者 2026-11-16 澄清）——**只影响应用外壳**（菜单栏、工具栏、面板、状态文本等），
+   `--app-ui-font-scale` 由设置面板「界面字号」写入根内联样式；**不改编辑器正文**（正文由
+   「编辑字号」单独控制，作用于 HugeRTE iframe 内 body）。外壳各处尺寸用 em 派生，故改根字号即整体缩放。
+   English: Interface font scale (maintainer clarification 2026-11-16) — affects **the application shell
+   only** (menu bar, toolbar, panels, status text). `--app-ui-font-scale` is written to the root inline
+   style by the settings panel's "interface font size" control; the **editor body is untouched** (its
+   size is controlled separately by "editor font size", applied to the HugeRTE iframe body). Shell
+   sizes derive from em, so the root size scales the whole chrome. */
+html { font-size: calc(16px * var(--app-ui-font-scale, 1)); }
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 720px; height: 100%; margin: 0; }
 button, select { font: inherit; }
@@ -218,6 +227,14 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 .confirm-actions button { font: inherit; padding: .42rem .9rem; border-radius: .3rem; cursor: pointer; }
 .confirm-actions .btn-ghost { border: 1px solid #a8b8c0; background: #fff; color: #15202b; }
 .confirm-actions .btn-danger { border: 1px solid #8f2f43; background: #b23a54; color: #fff; font-weight: 600; }
+/* 中文：「关于」窗口（维护者 2026-11-16）——复用确认模态的遮罩/卡片，正文为多行说明，按钮为普通主按钮。
+   English: The About window (maintainer 2026-11-16) — reuses the confirm modal's scrim/card; the body
+   is a multi-line description and the action is an ordinary primary button. */
+.about-card { width: 24rem; }
+.about-card__lines { display: grid; gap: .35rem; }
+.about-card__lines p { margin: 0; color: #425466; font-size: .84rem; line-height: 1.55; }
+.confirm-actions .btn-primary { border: 1px solid #8cc2cf; background: #fff; color: #034661; font-weight: 600; }
+.confirm-actions .btn-primary:hover, .confirm-actions .btn-primary:focus-visible { background: #e1fdf9; outline: 2px solid #034661; outline-offset: 2px; }
 .confirm-actions .btn-danger:focus-visible, .confirm-actions .btn-ghost:focus-visible { outline: 2px solid #034661; outline-offset: 2px; }
 
 /* 中文：多 Tab 条（原型稿 1，W-hrt-P4 F3）：位于头部与选项行之间；Tab 含脏 ●、关闭 ✕、
