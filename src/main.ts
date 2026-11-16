@@ -102,6 +102,19 @@ app.innerHTML = `
       </div>
       <div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div>
     </section>
+    <!-- 中文：应用级状态栏（W-hrt-P14 F4，原型稿 1）：保存状态 / 字符·词数 / 行列 / 编码格式。
+         取代 HugeRTE 内置状态栏（statusbar:false）——整合后一行承载全部持久指示；
+         瞬时操作消息仍在工具栏右端（#document-status）。 -->
+    <!-- English: The application status bar (W-hrt-P14 F4, prototype draft 1): save state /
+         character-word count / cursor line-column / encoding. It replaces HugeRTE's built-in
+         status bar (statusbar:false) so one row carries all persistent indicators; transient
+         operation messages stay at the toolbar's right end (#document-status). -->
+    <footer id="statusbar" class="statusbar" role="status" aria-label="状态栏">
+      <span id="status-save" class="statusbar__item">已保存</span>
+      <span id="status-count" class="statusbar__item">字符 0 · 词 0</span>
+      <span id="status-cursor" class="statusbar__item">行 1 · 列 1</span>
+      <span class="statusbar__item statusbar__item--end">UTF-8</span>
+    </footer>
     <div id="confirm-scrim" class="confirm-scrim" role="presentation">
       <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
         <h2 id="confirm-title">放弃未保存的修改？</h2>
@@ -123,6 +136,10 @@ const toolbarButtons = requiredElement<HTMLDivElement>("#toolbar-buttons");
 /** @lang zh-CN 编辑字号选择器——位于设置面板「编辑器外观」区（`W-hrt-P12` 后独立选项行取消，尺寸移入设置）。 / @lang en Editor font-size selector — lives in the settings panel's editor-appearance section (the standalone options row was removed in `W-hrt-P12`, its controls moved into Settings). */
 let fontSize: HTMLSelectElement;
 const tabbar = requiredElement<HTMLDivElement>("#tabbar");
+/** @lang zh-CN 应用级状态栏三块动态指示（保存状态/字符词数/行列；编码为静态文本）。 / @lang en The application status bar's three dynamic indicators (save state / character-word count / cursor; encoding is static). */
+const statusbarSave = requiredElement<HTMLSpanElement>("#status-save");
+const statusbarCount = requiredElement<HTMLSpanElement>("#status-count");
+const statusbarCursor = requiredElement<HTMLSpanElement>("#status-cursor");
 const explorerPanel = requiredElement<HTMLElement>("#explorer");
 const explorerTree = requiredElement<HTMLDivElement>("#explorer-tree");
 const explorerScope = requiredElement<HTMLSpanElement>("#explorer-scope");
@@ -298,10 +315,51 @@ function closeAppMenu(): void {
  * click to open, outside click or Esc closes, activating an item runs it and closes; keyboard
  * reachable (Tab moves across the menu buttons, Enter opens).
  */
-function renderAppMenubar(): void {
-  menubarElement.textContent = "";
-  /** @lang zh-CN 菜单集（按定案顺序；「编辑/插入/格式」当前为空提案占位——对应能力由编辑器内工具栏/HugeRTE 菜单承担）。 / @lang en Menu set in the decided order ("Edit/Insert/Format" are empty proposal placeholders — those capabilities live in the in-editor toolbar / HugeRTE menus). */
-  const menus: AppMenu[] = [
+/**
+ * @lang zh-CN
+ * 菜单栏三态模式（W-hrt-P14 F3，原型稿 5 + 评审 #5 定案「精简可行」）：`full` = 七菜单常显
+ * （默认），`compact` = 折叠为「☰ 菜单」单入口（分组下拉），`hidden` = 整行隐藏。
+ * 隐藏行以 0 高占位保持外壳栅格行数对齐（2026-11-16 行数错配教训——display:none 会让后续
+ * 子元素前移、弹性行落错）。模式持久化到 localStorage。
+ * @lang en
+ * Menubar modes (W-hrt-P14 F3, prototype draft 5 + review #5 "compact is feasible"): `full` =
+ * the seven menus always visible (default), `compact` = folded into a single "☰ Menu" entry
+ * (grouped dropdown), `hidden` = the row hidden. The hidden row keeps a zero-height placeholder
+ * for shell grid row alignment (the 2026-11-16 row-misalignment lesson — display:none would shift
+ * subsequent children and misplace the flexible row). The mode persists to localStorage.
+ */
+type MenubarMode = "full" | "compact" | "hidden";
+
+/** @lang zh-CN 菜单栏模式持久化键。 / @lang en Persistence key for the menubar mode. */
+const MENUBAR_MODE_KEY = "hia-hugerte.menubar-mode";
+
+/** @lang zh-CN 当前菜单栏模式（持久化；非法值回落 full）。 / @lang en The current menubar mode (persisted; invalid values fall back to full). */
+let menubarMode: MenubarMode = (() => {
+  const stored = localStorage.getItem(MENUBAR_MODE_KEY);
+  return stored === "compact" || stored === "hidden" || stored === "full" ? stored : "full";
+})();
+
+/** @lang zh-CN 用户切换菜单栏模式（设置面板入口）：持久化并重渲，先关闭可能开着的外点关闭器。 / @lang en Switch the menubar mode by user action (settings-panel entry): persist and re-render, closing any open dropdown closer first. */
+function setMenubarMode(mode: MenubarMode): void {
+  if (mode === menubarMode) return;
+  menubarMode = mode;
+  localStorage.setItem(MENUBAR_MODE_KEY, mode);
+  closeAppMenu();
+  renderAppMenubar();
+}
+
+/**
+ * @lang zh-CN
+ * 应用级菜单定义（文件按定案稿，其余为保守提案；「编辑/插入/格式」为空提案占位——对应能力
+ * 由编辑器内工具栏/HugeRTE 菜单承担）。独立函数供完整态按钮与精简态下拉共用（W-hrt-P14 F3）。
+ * @lang en
+ * Application menu definitions (File per the decided draft; the others are conservative proposals;
+ * "Edit/Insert/Format" are empty proposal placeholders — those capabilities live in the in-editor
+ * toolbar / HugeRTE menus). A standalone function shared by the full-mode buttons and the
+ * compact-mode dropdown (W-hrt-P14 F3).
+ */
+function buildAppMenus(): AppMenu[] {
+  return [
     {
       label: "文件",
       items: () => [
@@ -377,8 +435,29 @@ function renderAppMenubar(): void {
       ]
     }
   ];
+}
 
-  for (const menu of menus) {
+/**
+ * @lang zh-CN
+ * 渲染菜单栏（W-hrt-P14 F3 三态）：`full` 渲染七个菜单按钮（点击展开/悬停切换/再次点击收起，
+ * 行为同既有）；`compact` 渲染单个「☰ 菜单」按钮（点击弹出分组下拉）；`hidden` 清空内容并
+ * 由 CSS 保留 0 高占位（栅格对齐，见 MenubarMode 说明）。
+ * @lang en
+ * Render the menubar (W-hrt-P14 F3, three modes): `full` renders the seven menu buttons (click to
+ * open / hover to switch / click again to collapse, unchanged); `compact` renders a single
+ * "☰ Menu" button (click opens a grouped dropdown); `hidden` empties the row while CSS keeps the
+ * zero-height placeholder (grid alignment, see the MenubarMode notes).
+ */
+function renderAppMenubar(): void {
+  closeAppMenu();
+  menubarElement.textContent = "";
+  menubarElement.dataset.mode = menubarMode;
+  if (menubarMode === "hidden") return;
+  if (menubarMode === "compact") {
+    renderCompactMenubar();
+    return;
+  }
+  for (const menu of buildAppMenus()) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "menubar__item";
@@ -414,13 +493,9 @@ function renderAppMenubar(): void {
   }
 }
 
-/** @lang zh-CN 在给定菜单按钮下方打开下拉（定位用 fixed，随滚动不漂移）。 / @lang en Open a dropdown under the given menu button (fixed positioning; does not drift on scroll). */
-function openAppMenu(menu: AppMenu, anchor: HTMLElement, options: { focusFirstItem?: boolean } = {}): void {
-  const panel = document.createElement("div");
-  panel.className = "app-menu";
-  panel.setAttribute("role", "menu");
-  panel.setAttribute("data-owner", menu.label);
-  for (const item of menu.items()) {
+/** @lang zh-CN 向菜单面板追加菜单项（分隔线/快捷键渲染共用；完整态与精简态同构）。 / @lang en Append menu entries to a panel (separator/shortcut rendering shared; identical for full and compact modes). */
+function appendMenuItems(panel: HTMLElement, items: AppMenuItem[]): void {
+  for (const item of items) {
     if (item.separator) {
       const separator = document.createElement("div");
       separator.className = "app-menu__sep";
@@ -443,12 +518,14 @@ function openAppMenu(menu: AppMenu, anchor: HTMLElement, options: { focusFirstIt
     entry.addEventListener("click", () => { panel.remove(); item.action(); });
     panel.appendChild(entry);
   }
+}
+
+/** @lang zh-CN 挂接菜单面板的定位与关闭：fixed 定位锚定按钮下方、外点/Esc 关闭（捕获级，关闭自移除）、关闭器挂面板供 `closeAppMenu()` 统一调用（任何关闭路径都摘监听）、首项聚焦可选（悬停切换不抢焦点）。 / @lang en Wire a menu panel's positioning and closing: fixed anchoring under the button, outside-click/Esc close (capture phase, self-removing), the closer attached to the panel for the shared `closeAppMenu()` (every close path detaches listeners), optional first-item focus (hover switching never steals focus). */
+function wireAppMenuPanel(panel: HTMLElement, anchor: HTMLElement, options: { focusFirstItem?: boolean } = {}): void {
   const rect = anchor.getBoundingClientRect();
   panel.style.left = `${Math.round(rect.left)}px`;
   panel.style.top = `${Math.round(rect.bottom + 2)}px`;
   document.body.appendChild(panel);
-  // 中文：外点 / Esc 关闭（捕获级，一次注册、关闭时自移除）。
-  // English: Close on outside click / Esc (capture phase, registered once and removed on close).
   const closeOnOutside = (event: MouseEvent): void => {
     if (!panel.contains(event.target as Node)) closeMenu();
   };
@@ -461,23 +538,67 @@ function openAppMenu(menu: AppMenu, anchor: HTMLElement, options: { focusFirstIt
     document.removeEventListener("keydown", closeOnEscape, true);
     if (activeFloaterCloser === closeMenu) activeFloaterCloser = null;
   };
-  // 中文：把关闭器挂到面板上，供统一的 `closeAppMenu()` 调用——确保**任何**关闭路径都会摘掉监听器
-  //       （悬停切换若只 `panel.remove()`，旧面板的 mousedown/keydown 监听会残留并误关新菜单）。
-  // English: Attach the closer to the panel so the shared `closeAppMenu()` can invoke it — every close
-  //          path must detach the listeners (a bare `panel.remove()` during hover switching would leave
-  //          the old panel's mousedown/keydown listeners behind and mis-close the new menu).
   (panel as HTMLElement & { __close?: () => void }).__close = closeMenu;
   document.addEventListener("mousedown", closeOnOutside, true);
   document.addEventListener("keydown", closeOnEscape, true);
   activeFloaterCloser = closeMenu;
-  // 中文：首项自动聚焦（键盘用户可直接方向键/回车）；悬停切换时**不**抢焦点，否则焦点会随鼠标
-  //       在菜单间跳动、并让后续悬停切换行为不自然。
-  // English: Auto-focus the first item so keyboard users can continue immediately; hover switching
-  //          does **not** steal focus — otherwise focus would jump around with the pointer and make
-  //          further hover switches feel wrong.
   if (options.focusFirstItem !== false) {
     panel.querySelector<HTMLButtonElement>(".app-menu__item")?.focus();
   }
+}
+
+/** @lang zh-CN 在给定菜单按钮下方打开下拉（定位用 fixed，随滚动不漂移）。 / @lang en Open a dropdown under the given menu button (fixed positioning; does not drift on scroll). */
+function openAppMenu(menu: AppMenu, anchor: HTMLElement, options: { focusFirstItem?: boolean } = {}): void {
+  const panel = document.createElement("div");
+  panel.className = "app-menu";
+  panel.setAttribute("role", "menu");
+  panel.setAttribute("data-owner", menu.label);
+  appendMenuItems(panel, menu.items());
+  wireAppMenuPanel(panel, anchor, options);
+}
+
+/** @lang zh-CN 渲染精简态菜单栏（W-hrt-P14 F3）：单个「☰ 菜单」按钮（图标+文字），点击弹出分组下拉；再次点击收起（与完整态菜单按钮一致）。 / @lang en Render the compact menubar (W-hrt-P14 F3): a single "☰ Menu" button (icon + label) opening a grouped dropdown; clicking again collapses it (same as the full-mode menu buttons). */
+function renderCompactMenubar(): void {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "menubar__item menubar__compact";
+  button.setAttribute("aria-haspopup", "menu");
+  button.appendChild(createIcon("menu-2"));
+  const label = document.createElement("span");
+  label.textContent = "菜单";
+  button.appendChild(label);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const openOwner = document.querySelector(".app-menu[data-owner]");
+    if (openOwner?.getAttribute("data-owner") === "compact") { closeAppMenu(); return; }
+    closeAppMenu();
+    openCompactMenu(button);
+  });
+  menubarElement.appendChild(button);
+}
+
+/**
+ * @lang zh-CN
+ * 精简态下拉（W-hrt-P14 F3，评审 #5 定案「折叠为 ☰ 菜单」）：单个面板按七个菜单分组展示全部
+ * 项（组头只读、项可点击执行并关闭）——与 VS Code 汉堡菜单同构，全部能力保持可达。
+ * @lang en
+ * The compact dropdown (W-hrt-P14 F3, review #5 "fold into ☰ Menu"): a single panel lists every
+ * entry grouped by the seven menus (group headers read-only, entries run and close) — structurally
+ * the same as VS Code's hamburger menu, keeping every capability reachable.
+ */
+function openCompactMenu(anchor: HTMLElement): void {
+  const panel = document.createElement("div");
+  panel.className = "app-menu app-menu--grouped";
+  panel.setAttribute("role", "menu");
+  panel.setAttribute("data-owner", "compact");
+  for (const menu of buildAppMenus()) {
+    const group = document.createElement("div");
+    group.className = "app-menu__group";
+    group.textContent = menu.label;
+    panel.appendChild(group);
+    appendMenuItems(panel, menu.items());
+  }
+  wireAppMenuPanel(panel, anchor, {});
 }
 
 /** @lang zh-CN 执行编辑器命令（菜单转发的统一入口；编辑器未就绪时静默忽略）。 / @lang en Run an editor command (single funnel for menu forwarding; silently ignored when the editor is not ready). */
@@ -584,6 +705,10 @@ function refreshDocumentHeader(): void {
   const summaryText = summary.total > 1 ? `${summary.total} 个文档 · ${summary.dirty} 个未保存` : (summary.dirty > 0 ? "1 个文档 · 1 个未保存" : "1 个文档");
   documentPath.textContent = `${summaryText}：${summary.dirty > 0 && state().dirty ? "● " : ""}${label}`;
   document.title = state().dirty ? `● ${label} — HIA HugeRTE` : `${label} — HIA HugeRTE`;
+  // 中文：状态栏「保存状态」跟随活动 Tab 的脏标记（W-hrt-P14 F4）。
+  // English: The status bar's save state follows the active tab's dirty flag (W-hrt-P14 F4).
+  statusbarSave.textContent = state().dirty ? "● 未保存" : "已保存";
+  statusbarSave.classList.toggle("statusbar__save--dirty", state().dirty);
   renderTabStrip();
 }
 
@@ -749,6 +874,69 @@ function applyEditorFontSize(): void {
   editor?.getBody().style.setProperty("font-size", selectedSize);
 }
 
+/** @lang zh-CN 行列计数的「另起一行」元素集合（近似渲染行：块级开标签与 <br>/<hr> 各计一行；ul/ol/table/tr 等容器不计，由其子块计）。 / @lang en Line-break elements for cursor metrics (approximate rendered lines: block open tags and <br>/<hr> each add one; containers like ul/ol/table/tr are skipped and counted via their child blocks). */
+const CURSOR_LINE_ELEMENTS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "DIV", "LI", "DT", "DD", "BLOCKQUOTE", "PRE", "FIGURE", "FIGCAPTION", "TD", "TH", "BR", "HR"]);
+
+/**
+ * @lang zh-CN
+ * 计算活动 Tab 的光标行列并写入状态栏（W-hrt-P14 F4，近似语义）：沿 body 文档序走查到 caret
+ * 边界，块级开标签与 `<br>`/`<hr>` 各起一行；列为当前行内已累计字符数（caret 在文本节点时
+ * 加上偏移）。已知近似：嵌套容器（ul/ol/table）按子块计数，表格等复杂布局与渲染行可能略有
+ * 出入；v1 取「文档文本行」语义——与 F1 源码视图的 HTML 源码行号是**不同坐标系**。
+ * @lang en
+ * Compute the active tab's cursor line-column into the status bar (W-hrt-P14 F4, approximate
+ * semantics): walk the body in document order to the caret boundary; block open tags and
+ * `<br>`/`<hr>` each start a line; the column is the character count within the current line (plus
+ * the offset when the caret sits in a text node). Known approximation: nested containers
+ * (ul/ol/table) count via their child blocks, so complex layouts like tables may deviate slightly
+ * from rendered lines; v1 uses "document text line" semantics — a **different coordinate system**
+ * from the F1 source view's HTML-source line numbers.
+ */
+function updateStatusCursor(): void {
+  if (!editor) return;
+  const body = editor.getBody();
+  const selectionRange = editor.selection.getRng();
+  if (!body || !selectionRange) return;
+  const ownerDocument = body.ownerDocument ?? document;
+  const startContainer = selectionRange.startContainer;
+  // 中文：caret 边界——文本节点即该节点本身；元素容器取偏移处的子节点（offset 等于子节点数时
+  //       为 null，走查到底即视作文档末尾位置）。
+  // English: The caret boundary — the text node itself; for an element container take the child at
+  //       the offset (null when the offset equals the child count: the walk runs to the document
+  //       end, i.e. the final position).
+  const boundary = startContainer.nodeType === Node.TEXT_NODE
+    ? startContainer
+    : (startContainer.childNodes[selectionRange.startOffset] ?? null);
+  const walker = ownerDocument.createTreeWalker(body, NodeFilter.SHOW_ALL);
+  let line = 1;
+  let column = 1;
+  // 中文：首个块元素即第 1 行的开端，不再额外计一行（实测 off-by-one 修正：`<p>…</p>` 单段
+  //       文档的 caret 应为 行1 而非 行2）。
+  // English: The first block element OPENS line 1 rather than adding one (measured off-by-one fix:
+  //       a single-`<p>` document must report line 1, not line 2).
+  let firstNodeVisited = false;
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    if (node === boundary) {
+      if (node.nodeType === Node.TEXT_NODE) column += selectionRange.startOffset;
+      break;
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      column += (node.nodeValue ?? "").length;
+      firstNodeVisited = true;
+      continue;
+    }
+    const tagName = (node as Element).tagName;
+    if (CURSOR_LINE_ELEMENTS.has(tagName)) {
+      if (firstNodeVisited) {
+        line += 1;
+        column = 1;
+      }
+      firstNodeVisited = true;
+    }
+  }
+  statusbarCursor.textContent = `行 ${line} · 列 ${column}`;
+}
+
 async function initializeEditor(): Promise<void> {
   // 中文：字号选择器现在延迟到设置面板创建；编辑器初始化直接沿用持久化值（由 applyEditorFontSize 读取）。
   // English: The size selector is now created lazily inside the settings panel; editor init simply
@@ -765,7 +953,12 @@ async function initializeEditor(): Promise<void> {
     //       handled by the document-level interception below.
     contextmenu_never_use_native: true,
     skin_url: "default", content_css: "default",
-    statusbar: true,
+    // 中文：关闭 HugeRTE 内置状态栏（W-hrt-P14 F4）——其职责（字数统计）由应用级状态栏
+    //       (#statusbar) 整合承担；wordcount 插件仍在运行并派发 wordCountUpdate。
+    // English: Disable HugeRTE's built-in status bar (W-hrt-P14 F4) — its duty (word count) is
+    //       taken over by the application status bar (#statusbar); the wordcount plugin keeps
+    //       running and dispatching wordCountUpdate.
+    statusbar: false,
     object_resizing: "table",
     table_grid: true,
     table_resize_bars: true,
@@ -820,26 +1013,20 @@ async function initializeEditor(): Promise<void> {
   //       events do not bubble, so capture is required to see body/html scrolling). W-hrt-P14 F1;
   //       review #4 decided it is a setting (on by default).
   editor.getDoc()?.addEventListener("scroll", syncScrollFromEditorToSource, true);
-  // 中文：状态栏计数中文化（维护者 2026-11-15 反馈："7 words" 需显示字符数等）——HugeRTE 内置
-  //       计数为英文单值（"{0} words"）。方案：把内置计数按钮替换为中文双显示元素（字符 + 词），
-  //       并监听插件派发的 `wordCountUpdate` 事件（携带 words/characters 统计）持续刷新。
-  //       词数语义：HugeRTE 按通用分词规则计数，每个 CJK 字符计为一个词；字符数含空格。
-  // English: Status-bar count in Chinese (maintainer feedback 2026-11-15: "7 words" should show
-  //       character counts etc.) — the built-in count is a single English value ("{0} words").
-  //       Approach: replace the built-in count button with a Chinese dual display element
-  //       (characters + words) and refresh it from the plugin's `wordCountUpdate` event (which
-  //       carries words/characters stats). Word semantics: HugeRTE counts by universal word
-  //       segmentation — each CJK character counts as one word; character count includes spaces.
-  const builtInCount = document.querySelector(".tox-statusbar__wordcount");
-  if (builtInCount) {
-    const countDisplay = document.createElement("span");
-    countDisplay.className = "tox-statusbar__wordcount";
-    countDisplay.textContent = "字符 0 · 词 0";
-    builtInCount.replaceWith(countDisplay);
-    editor.on("wordCountUpdate", (event: { wordCount: { words: number; characters: number } }) => {
-      countDisplay.textContent = `字符 ${event.wordCount.characters} · 词 ${event.wordCount.words}`;
-    });
-  }
+  // 中文：字数统计接入应用级状态栏（W-hrt-P14 F4）——wordcount 插件派发的 wordCountUpdate
+  //       携带 words/characters；词数语义：每个 CJK 字符计为一个词，字符数含空格。
+  // English: Word counts feed the application status bar (W-hrt-P14 F4) — the wordcount plugin's
+  //       wordCountUpdate event carries words/characters; semantics: each CJK character counts as
+  //       one word, and the character count includes spaces.
+  editor.on("wordCountUpdate", (event: { wordCount: { words: number; characters: number } }) => {
+    statusbarCount.textContent = `字符 ${event.wordCount.characters} · 词 ${event.wordCount.words}`;
+  });
+  // 中文：光标行列接入状态栏（W-hrt-P14 F4）——NodeChange 覆盖选区/节点变化，keyup/click 覆盖
+  //       同节点内移动，SetContent 覆盖内容整体换入后的初始定位。
+  // English: Cursor line-column feeds the status bar (W-hrt-P14 F4) — NodeChange covers selection/
+  //       node changes, keyup/click cover movement inside one node, SetContent covers the initial
+  //       position after wholesale content swaps.
+  editor.on("NodeChange keyup click focus SetContent", updateStatusCursor);
   await replaceDocument(tabs[activeIndex].document);
   applyEditorFontSize();
 }
@@ -1371,7 +1558,23 @@ async function toggleSettingsPanel(): Promise<void> {
   fontSize.addEventListener("change", applyEditorFontSize);
   fontSizeLabel.appendChild(fontSize);
 
-  appearanceRow.append(uiSizeLabel, fontSizeLabel);
+  // 中文：菜单栏三态（W-hrt-P14 F3）——显示/精简/隐藏；隐藏行保留 0 高占位（外壳栅格对齐）。
+  // English: Menubar three modes (W-hrt-P14 F3) — full/compact/hidden; the hidden row keeps a
+  //          zero-height placeholder (shell grid alignment).
+  const menubarLabel = document.createElement("label");
+  menubarLabel.className = "settings-panel__state";
+  menubarLabel.textContent = "菜单栏 ";
+  const menubarSelect = document.createElement("select");
+  for (const [value, text] of [["full", "显示"], ["compact", "精简"], ["hidden", "隐藏"]] as const) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    menubarSelect.appendChild(option);
+  }
+  menubarSelect.value = menubarMode;
+  menubarSelect.addEventListener("change", () => setMenubarMode(menubarSelect.value as MenubarMode));
+  menubarLabel.appendChild(menubarSelect);
+  appearanceRow.append(uiSizeLabel, fontSizeLabel, menubarLabel);
   appearanceSection.append(appearanceTitle, appearanceRow);
   panel.appendChild(appearanceSection);
 

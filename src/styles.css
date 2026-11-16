@@ -11,21 +11,22 @@ html { font-size: calc(16px * var(--app-ui-font-scale, 1)); }
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 720px; height: 100%; margin: 0; }
 button, select { font: inherit; }
-/* 中文：外壳栅格（`W-hrt-P12` 方案二定案）——按顶层子元素的实际顺序排列
-   （Banner / 菜单栏 / 工具栏 / Tab 条 / 编辑容器 / 确认遮罩）：前四行按内容高度，
-   编辑容器吃掉剩余高度（`minmax(0,1fr)`），确认遮罩行高 0（fixed 浮层，不占空间）。
+/* 中文：外壳栅格（`W-hrt-P12` 方案二定案 + `W-hrt-P14` F4 状态栏行）——按顶层子元素的实际顺序
+   排列（Banner / 菜单栏 / 工具栏 / Tab 条 / 编辑容器 / 状态栏 / 确认遮罩）：前四行与状态栏行按
+   内容高度，编辑容器吃掉剩余高度（`minmax(0,1fr)`），确认遮罩行高 0（fixed 浮层，不占空间）。
    行数必须与顶层子元素数量**逐一对齐**——错位会让弹性行落到错误的元素上并导致编辑区塌缩
-   （2026-11-16 实测两次：行数多/少时 options 行或 tab 条会抢走 540px）。
-   2026-11-16 二次精简：原「编辑字号 + 状态」独立选项行取消（字号移入设置面板、状态文本并入工具栏右端）。
-   English: Shell grid (option B decided in `W-hrt-P12`) in the exact top-level child order
-   (Banner / menu bar / toolbar / tab strip / editor container / confirm scrim): the first four rows
-   size to content, the editor container takes the remaining height (`minmax(0,1fr)`) and the scrim
-   row is 0 (fixed overlay). The row count must match the top-level children one-to-one — a
-   misalignment puts the flexible row on the wrong element and collapses the editor (measured twice on
-   2026-11-16: with one row too many or too few, the options row or tab strip took 540px). Second
-   simplification on 2026-11-16: the standalone "font size + status" options row is gone (font size
-   moved into Settings; the status text now sits at the right end of the toolbar). */
-.application-shell { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr) 0; height: 100%; }
+   （2026-11-16 实测两次：行数多/少时 options 行或 tab 条会抢走 540px；2026-11-17 F3/F4 行增减
+   均按同款教训逐行核对）。菜单栏「隐藏」态以 0 高占位保留行（见 .menubar[data-mode=hidden]）。
+   English: Shell grid (`W-hrt-P12` option B + the `W-hrt-P14` F4 status-bar row) in the exact
+   top-level child order (Banner / menu bar / toolbar / tab strip / editor container / status bar /
+   confirm scrim): the first four rows and the status row size to content, the editor container
+   takes the remaining height (`minmax(0,1fr)`) and the scrim row is 0 (fixed overlay). The row
+   count must match the top-level children one-to-one — a misalignment puts the flexible row on the
+   wrong element and collapses the editor (measured twice on 2026-11-16: with one row too many or
+   too few, the options row or tab strip took 540px; F3/F4 row changes on 2026-11-17 were verified
+   line by line against the same lesson). The menubar's hidden mode keeps its row as a zero-height
+   placeholder (see .menubar[data-mode=hidden]). */
+.application-shell { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr) auto 0; height: 100%; }
 .app-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; color: #fff; background: #034661; }
 /* 中文：Banner 中央预留位（未来综合搜索/命令输入框等模块），当前为空且不参与交互。
    English: Banner centre reservation (future combined search / command box modules) — currently
@@ -39,8 +40,25 @@ button, select { font: inherit; }
 /* 中文：应用级菜单栏——经典 Windows 形态：一行文字菜单，点击展开下拉。
    English: Application menu bar — classic Windows form: one row of text menus, click to open a dropdown. */
 .menubar { display: flex; align-items: center; gap: .05rem; padding: .18rem .5rem; background: #fff; border-bottom: 1px solid #e0e7ea; }
+/* 中文：菜单栏「隐藏」态（W-hrt-P14 F3）——0 高占位而非 display:none：外壳栅格行数必须与
+   顶层子元素逐一对齐（2026-11-16 行数错配教训），display:none 会让后续子元素前移、弹性行
+   （编辑容器）落到错误的行上。visibility:hidden 同时从无障碍树移除。
+   English: The menubar's "hidden" mode (W-hrt-P14 F3) — a zero-height placeholder instead of
+   display:none: shell grid rows must match top-level children one-to-one (the 2026-11-16
+   row-misalignment lesson); display:none would shift subsequent children and put the flexible row
+   (editor container) on the wrong line. visibility:hidden also removes it from the a11y tree. */
+.menubar[data-mode="hidden"] { height: 0; min-height: 0; padding: 0; border-bottom-width: 0; overflow: hidden; visibility: hidden; }
 .menubar__item { padding: .28rem .62rem; border: none; border-radius: .28rem; background: transparent; color: #15202b; font: inherit; font-size: .84rem; cursor: pointer; white-space: nowrap; }
 .menubar__item:hover, .menubar__item:focus-visible { background: #e1fdf9; color: #034661; outline: none; }
+/* 中文：精简态「☰ 菜单」按钮（W-hrt-P14 F3）——图标+文字，视觉与完整态按钮一致。 */
+/* English: The compact "☰ Menu" button (W-hrt-P14 F3) — icon + label, visually identical to the
+   full-mode buttons. */
+.menubar__compact { display: inline-flex; align-items: center; gap: .32rem; }
+/* 中文：精简态分组下拉（W-hrt-P14 F3）——组头为只读小标题，项沿用 app-menu__item。 */
+/* English: The compact grouped dropdown (W-hrt-P14 F3) — group headers are read-only captions;
+   entries reuse app-menu__item. */
+.app-menu--grouped { width: 15rem; }
+.app-menu__group { padding: .4rem .55rem .12rem; color: #98a8b1; font-size: .72rem; font-weight: 600; }
 /* 中文：下拉面板（fixed 定位，锚定在菜单按钮下方）。
    English: Dropdown panel (fixed, anchored under the menu button). */
 .app-menu { position: fixed; z-index: 46; min-width: 13rem; max-height: 70vh; overflow-y: auto; padding: .25rem; display: grid; border: 1px solid #b8c7ce; border-radius: .4rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 22%); }
@@ -296,6 +314,17 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 .editor-pane > .tox .tox-edit-area > iframe { flex: 1 1 auto; height: 100% !important; min-height: 0; }
 .drop-indicator { position: absolute; z-index: 10; display: none; place-items: center; inset: .75rem; border: 3px dashed #034661; border-radius: .45rem; color: #034661; font-size: 1.2rem; font-weight: 700; pointer-events: none; background: rgb(225 253 249 / 90%); }
 .drop-indicator--active { display: grid; }
+
+/* 中文：应用级状态栏（W-hrt-P14 F4，原型稿 1）——保存状态 / 字符·词数 / 行列 / 编码（静态）；
+   取代 HugeRTE 内置状态栏。脏状态用警示色加粗；末项 UTF-8 靠右弱化。
+   English: The application status bar (W-hrt-P14 F4, prototype draft 1) — save state /
+   character-word count / cursor line-column / encoding (static); it replaces HugeRTE's built-in
+   status bar. The dirty state uses the warning colour in bold; the trailing UTF-8 sits right,
+   dimmed. */
+.statusbar { display: flex; align-items: center; gap: .9rem; padding: .22rem .75rem; background: #e9eef1; border-top: 1px solid #d4dde1; color: #425466; font-size: .76rem; min-height: 1.7rem; }
+.statusbar__item { white-space: nowrap; }
+.statusbar__save--dirty { color: #b23a54; font-weight: 600; }
+.statusbar__item--end { margin-left: auto; color: #7d939f; }
 
 /* 中文：放弃修改确认模态（原型 v1，work-zone/dev/research/prototypes/hrt-confirm-modal-2026-11-10）。
    遮罩覆盖整个应用外壳，卡片居中；默认焦点在「取消」，确认按钮用警示色并带可见焦点环。 */
