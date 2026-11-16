@@ -2,7 +2,7 @@
 
 HIA HugeRTE Tauri is a Windows desktop HTML editor built around HugeRTE and packaged with Tauri.
 
-The current workspace release line (`v0.3.0`) provides a focused local-document workflow:
+The current workspace release line (`v0.4.0`) provides a focused local-document workflow:
 
 - Create, open and save UTF-8 `.htm` / `.html` documents; edit them with HugeRTE.
 - Edit multiple documents at once: every opened file gets its own tab, with dirty markers, close confirmation for modified tabs and an overflow menu (up to 20 tabs per window).
@@ -20,7 +20,7 @@ The first cycle targets Windows 10/11 x64 and uses the system WebView2 runtime r
 
 ## Release status
 
-`v0.1.0` was the completed `W-hrt-P1` baseline; `v0.2.0` added the multi-tab workspace, the read-only explorer sidebar and recent-file history; `v0.3.0` added the Settings panel with authorized "Open with" registration and the version/download-page info (see [CHANGELOG](CHANGELOG.md) for the full release line). Every release carries automated build/test evidence, portable-archive smoke evidence and a recorded Windows regression baseline. The portable build deliberately does not install or silently change Windows file associations: use **Open with** to select the extracted executable. See [docs](docs/README.md) for public-facing project information, including the graded application boundary.
+`v0.1.0` was the completed `W-hrt-P1` baseline; `v0.2.0` added the multi-tab workspace, the read-only explorer sidebar and recent-file history; `v0.3.0` added the Settings panel with authorized "Open with" registration and the version/download-page info; `v0.4.0` added the application menu bar and icon toolbar, the About dialog, in-editor find-and-replace with a bilingual character/word count, and split interface vs editor font sizing (see [CHANGELOG](CHANGELOG.md) for the full release line). Every release carries automated build/test evidence, portable-archive smoke evidence and a recorded Windows regression baseline. The portable build deliberately does not install or silently change Windows file associations: use **Open with** to select the extracted executable. See [docs](docs/README.md) for public-facing project information, including the graded application boundary.
 
 ## Build and portable package
 

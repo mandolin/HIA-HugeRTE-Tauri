@@ -2,13 +2,15 @@
 
 All notable public changes will be documented in this file.
 
-## Unreleased
+## v0.4.0 - 2026-11-16
 
-- Added an application-level menu bar and toolbar (classic Windows shell layout, decided 2026-11-16): the banner keeps the brand and document summary with reserved space for future modules (combined search / command box) and only a Settings gear on the right; below it a menu bar (File / Edit / View / Insert / Format / Tools / Help — File menu as decided, the others conservative proposals) and a toolbar with icons (New / Open / Save / Save as / History | Tree).
-- Icons use Tabler Icons (MIT), inlined as SVG path data with no new dependency; see THIRD_PARTY_NOTICES.
-
-- The status bar count is now bilingual Chinese (字符 N · 词 N, characters + words) replacing the English N-words display; HugeRTE's built-in word segmentation counts each CJK character as a word.
-- Fixed floating surfaces (History dropdown, Settings panel, breadcrumb dropdown): they now close when clicking anywhere outside them — including clicks inside the editor area, which the previous implementation could not see (the editor iframe is a separate document). Clicking the entry button again still toggles them.
+- Added an application-level menu bar and toolbar (classic Windows shell layout): the banner keeps the brand and document summary with reserved space for future modules and only a Settings gear on the right; below it a menu bar (File / Edit / View / Insert / Format / Tools / Help) and a toolbar with icons (New / Open / Save / Save as / History | Tree).
+- Menus behave like a native Windows menu bar: hovering an adjacent menu switches the open dropdown, Escape or an outside click closes it, and the first item receives focus when opened from the keyboard.
+- Added an About dialog (Help → About HIA HugeRTE) showing the version, technical base, licence notes and the local-only privacy boundary.
+- Split font sizing into two independent settings: **interface font size** (menu bar, toolbar, panels, status text) and **editor font size** (document text only). Changing the interface size no longer alters the edited document's text.
+- Added in-editor find and replace plus a live character/word count in the status bar (bilingual Chinese display), built from HugeRTE's bundled plugins.
+- Floating surfaces (History dropdown, Settings panel, breadcrumb dropdown, menus) now close when clicking anywhere outside them — including inside the editor area — while clicking the entry again still toggles them.
+- Icons use Tabler Icons (MIT) inlined as SVG path data with no new dependency; see THIRD_PARTY_NOTICES.
 
 ## v0.3.0 - 2026-11-13
 
