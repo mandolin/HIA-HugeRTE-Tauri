@@ -46,9 +46,11 @@ app.innerHTML = `
       <button id="settings-button" type="button" class="app-header__gear" title="设置" aria-label="设置"></button>
     </header>
     <nav id="menubar" class="menubar" role="menubar" aria-label="主菜单"></nav>
-    <div id="toolbar" class="app-toolbar" role="toolbar" aria-label="文档操作"></div>
+    <div id="toolbar" class="app-toolbar" role="toolbar" aria-label="文档操作">
+      <div id="toolbar-buttons" class="app-toolbar__buttons"></div>
+      <span id="document-status" class="app-toolbar__status" role="status">准备就绪</span>
+    </div>
     <div id="tabbar" class="tabbar" role="tablist" aria-label="打开的文档"></div>
-    <section class="editor-options" aria-label="编辑器设置"><label>编辑字号 <select id="editor-font-size"><option value="14px">14</option><option value="16px" selected>16</option><option value="18px">18</option><option value="20px">20</option></select></label><span id="document-status" role="status">准备就绪</span></section>
     <section class="editor-container">
       <div id="workbench" class="workbench">
         <aside id="explorer" class="explorer" aria-label="资源管理" hidden>
@@ -82,7 +84,9 @@ const documentPath = requiredElement<HTMLParagraphElement>("#document-path");
 const documentStatus = requiredElement<HTMLSpanElement>("#document-status");
 const editorTarget = requiredElement<HTMLTextAreaElement>("#hugerte-editor");
 const dropIndicator = requiredElement<HTMLDivElement>("#drop-indicator");
-const fontSize = requiredElement<HTMLSelectElement>("#editor-font-size");
+const toolbarButtons = requiredElement<HTMLDivElement>("#toolbar-buttons");
+/** @lang zh-CN 编辑字号选择器——位于设置面板「编辑器外观」区（`W-hrt-P12` 后独立选项行取消，尺寸移入设置）。 / @lang en Editor font-size selector — lives in the settings panel's editor-appearance section (the standalone options row was removed in `W-hrt-P12`, its controls moved into Settings). */
+let fontSize: HTMLSelectElement;
 const tabbar = requiredElement<HTMLDivElement>("#tabbar");
 const explorerPanel = requiredElement<HTMLElement>("#explorer");
 const explorerTree = requiredElement<HTMLDivElement>("#explorer-tree");
@@ -169,14 +173,14 @@ function renderAppMenubar(): void {
         { label: "撤销", shortcut: "Ctrl+Z", action: () => execEditorCommand("Undo") },
         { label: "重做", shortcut: "Ctrl+Y", action: () => execEditorCommand("Redo") },
         { separator: true, label: "", action: () => undefined },
-        { label: "查找与替换…", shortcut: "Ctrl+F", action: () => execEditorCommand("mceSearch") }
+        { label: "查找与替换…", shortcut: "Ctrl+F", action: () => execEditorCommand("SearchReplace") }
       ]
     },
     {
       label: "查看",
       items: () => [
         { label: "显示/隐藏目录树", action: () => toggleExplorerFromMenu() },
-        { label: "编辑字号…", action: () => fontSize.focus() },
+        { label: "编辑字号…", action: () => void toggleSettingsPanel() },
         { separator: true, label: "", action: () => undefined },
         { label: "全屏（编辑器）", action: () => execEditorCommand("mceFullScreen") }
       ]
@@ -346,7 +350,7 @@ async function openReleasesPageFromMenu(): Promise<void> {
  * with state (e.g. after the tree is toggled elsewhere).
  */
 function renderAppToolbar(): void {
-  toolbarElement.textContent = "";
+  toolbarButtons.textContent = "";
   /** @lang zh-CN 工具栏按钮定义（图标 + 文字 + 点击行为）。 / @lang en Toolbar button definition (icon + label + click handler). */
   const buttons: Array<{ icon: Parameters<typeof createIcon>[0]; label: string; title: string; onClick: () => void; pressed?: boolean }> = [
     { icon: "file-plus", label: "新建", title: "新建文档 (Ctrl+N)", onClick: () => void createDocument() },
@@ -362,7 +366,7 @@ function renderAppToolbar(): void {
     if (index === 5) {
       const separator = document.createElement("span");
       separator.className = "app-toolbar__sep";
-      toolbarElement.appendChild(separator);
+      toolbarButtons.appendChild(separator);
     }
     const button = document.createElement("button");
     button.type = "button";
@@ -378,7 +382,7 @@ function renderAppToolbar(): void {
     label.textContent = definition.label;
     button.appendChild(label);
     button.addEventListener("click", definition.onClick);
-    toolbarElement.appendChild(button);
+    toolbarButtons.appendChild(button);
   });
 }
 
@@ -528,14 +532,18 @@ async function applyDocumentToEditor(documentState: DocumentState): Promise<void
 }
 
 function applyEditorFontSize(): void {
-  const selectedSize = fontSize.value;
+  // 中文：字号选择器现在只存在于设置面板内（按需创建）；未打开面板时使用持久化值。
+  // English: The size selector now only exists inside the settings panel (created on demand); when the
+  //          panel has never opened, fall back to the persisted value.
+  const selectedSize = fontSize?.value ?? localStorage.getItem("hia-hugerte.editor-font-size") ?? "16px";
   localStorage.setItem("hia-hugerte.editor-font-size", selectedSize);
   editor?.getBody().style.setProperty("font-size", selectedSize);
 }
 
 async function initializeEditor(): Promise<void> {
-  const savedFontSize = localStorage.getItem("hia-hugerte.editor-font-size");
-  if (savedFontSize && Array.from(fontSize.options).some((option) => option.value === savedFontSize)) fontSize.value = savedFontSize;
+  // 中文：字号选择器现在延迟到设置面板创建；编辑器初始化直接沿用持久化值（由 applyEditorFontSize 读取）。
+  // English: The size selector is now created lazily inside the settings panel; editor init simply
+  //          reuses the persisted value (read by applyEditorFontSize).
   registerCompatibilityChecklistPlugin();
   const instances = await hugerte.init({
     target: editorTarget, height: "100%", menubar: false, promotion: false, branding: false, resize: false, convert_urls: false,
@@ -1062,6 +1070,35 @@ async function toggleSettingsPanel(): Promise<void> {
     }
   });
   panel.appendChild(assocSection);
+
+  // 中文：编辑器外观区——编辑字号（自原独立选项行移入，`W-hrt-P12`）；字号变更即时作用于编辑器并持久化。
+  // English: Editor appearance section — editor font size (moved here from the former standalone options
+  //          row in `W-hrt-P12`); changes apply immediately and persist.
+  const appearanceSection = document.createElement("div");
+  appearanceSection.className = "settings-panel__section";
+  const appearanceTitle = document.createElement("div");
+  appearanceTitle.className = "settings-panel__title";
+  appearanceTitle.textContent = "编辑器外观";
+  const appearanceRow = document.createElement("div");
+  appearanceRow.className = "settings-panel__row";
+  const fontSizeLabel = document.createElement("label");
+  fontSizeLabel.className = "settings-panel__state";
+  fontSizeLabel.textContent = "编辑字号 ";
+  fontSize = document.createElement("select");
+  fontSize.id = "editor-font-size";
+  for (const size of ["14px", "16px", "18px", "20px"]) {
+    const option = document.createElement("option");
+    option.value = size;
+    option.textContent = size.replace("px", "");
+    fontSize.appendChild(option);
+  }
+  const savedSize = localStorage.getItem("hia-hugerte.editor-font-size");
+  fontSize.value = savedSize && Array.from(fontSize.options).some((o) => o.value === savedSize) ? savedSize : "16px";
+  fontSize.addEventListener("change", applyEditorFontSize);
+  fontSizeLabel.appendChild(fontSize);
+  appearanceRow.appendChild(fontSizeLabel);
+  appearanceSection.append(appearanceTitle, appearanceRow);
+  panel.appendChild(appearanceSection);
 
   // 中文：版本区——当前版本 + 「打开下载页」（零网络：不在应用内请求远端）。
   // English: Version section — current version plus "open download page" (zero network: nothing is
@@ -1887,7 +1924,9 @@ window.addEventListener("resize", () => {
     applyExplorerWidth();
   }
 });
-fontSize.addEventListener("change", applyEditorFontSize);
+// 中文：字号选择器在设置面板内按需创建并自行绑定 change（见 toggleSettingsPanel），此处不再绑定。
+// English: The size selector is created on demand inside the settings panel and binds its own change
+//          handler (see toggleSettingsPanel); no binding here.
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
