@@ -83,7 +83,22 @@ app.innerHTML = `
           </div>
         </aside>
         <div id="explorer-resizer" class="explorer__resizer" role="separator" aria-orientation="vertical" aria-label="调整资源管理器宽度" title="拖动调整资源管理器宽度（聚焦后可用左右方向键微调）" tabindex="0" hidden></div>
-        <div class="editor-pane"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
+        <div id="editor-pane" class="editor-pane"><textarea id="hugerte-editor" aria-label="HTML 文档编辑器"></textarea></div>
+        <!-- 中文：源码视图（W-hrt-P14 F1，评审 #4/#5 定案）：并排双栏（右置源码栏 + 可拖分隔条 +
+             同步滚动设置项）与整区切换共用同一面板——整区时编辑窗格隐藏、源码栏吃满剩余宽度；
+             第三形态（模态对话框）沿用 HugeRTE code 插件，不在此结构内。 -->
+        <!-- English: The source view (W-hrt-P14 F1, decided by review items #4/#5): the side-by-side
+             form (source pane on the right + draggable separator + sync-scroll setting) and the
+             full-area switch share this pane — in full mode the editor pane hides and the source
+             pane fills the row; the third form (modal dialog) stays HugeRTE's code plugin. -->
+        <div id="source-resizer" class="source-resizer" role="separator" aria-orientation="vertical" aria-label="调整源码栏宽度" title="拖动调整源码栏宽度（聚焦后可用左右方向键微调）" tabindex="0" hidden></div>
+        <div id="source-pane" class="source-pane" aria-label="源码视图" hidden>
+          <div class="source-pane__head">
+            <span class="source-pane__title">源代码</span>
+            <label id="source-sync-label" class="source-pane__sync" for="source-sync-scroll"><input id="source-sync-scroll" type="checkbox" /> 同步滚动</label>
+          </div>
+          <textarea id="source-editor" class="source-editor" spellcheck="false" aria-label="HTML 源码编辑区"></textarea>
+        </div>
       </div>
       <div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div>
     </section>
@@ -123,6 +138,12 @@ const explorerPaneSearch = requiredElement<HTMLElement>("#explorer-pane-search")
 const explorerOutline = requiredElement<HTMLDivElement>("#explorer-outline");
 const explorerSearchInput = requiredElement<HTMLInputElement>("#explorer-search-input");
 const explorerSearchResults = requiredElement<HTMLDivElement>("#explorer-search-results");
+/** @lang zh-CN 源码视图三形态的容器与控件引用（分隔条 / 源码面板 / 源码编辑区 / 同步滚动开关；编辑窗格的整区隐藏由 CSS `data-source-view` 承担，无需 JS 引用）。 / @lang en References for the source view's three forms (separator / source pane / source textarea / sync-scroll toggle; the editor pane's full-mode hiding is handled by the CSS `data-source-view`, no JS reference needed). */
+const sourceResizer = requiredElement<HTMLDivElement>("#source-resizer");
+const sourcePane = requiredElement<HTMLElement>("#source-pane");
+const sourceTextarea = requiredElement<HTMLTextAreaElement>("#source-editor");
+const sourceSyncCheckbox = requiredElement<HTMLInputElement>("#source-sync-scroll");
+const sourceSyncLabel = requiredElement<HTMLLabelElement>("#source-sync-label");
 const settingsButton = requiredElement<HTMLButtonElement>("#settings-button");
 const menubarElement = requiredElement<HTMLElement>("#menubar");
 const toolbarElement = requiredElement<HTMLElement>("#toolbar");
@@ -306,6 +327,14 @@ function renderAppMenubar(): void {
       label: "查看",
       items: () => [
         { label: "显示/隐藏目录树", action: () => toggleExplorerFromMenu() },
+        // 中文：源码视图入口（W-hrt-P14 F1）——当前形态加 ✓ 前缀；再次点击同形态即退回模态（可视化）。
+        //       第三形态（源代码对话框）保留在「格式 → 源代码」。
+        // English: Source view entries (W-hrt-P14 F1) — the active form carries a ✓ prefix; clicking
+        //          the active form again returns to the modal (visual) form. The third form (source
+        //          dialog) remains under "Format → Source code".
+        { label: sourceViewMode === "split" ? "✓ 源码并排双栏" : "源码并排双栏", action: () => void setSourceViewMode(sourceViewMode === "split" ? "modal" : "split") },
+        { label: sourceViewMode === "full" ? "✓ 源码整区切换" : "源码整区切换", action: () => void setSourceViewMode(sourceViewMode === "full" ? "modal" : "full") },
+        { separator: true, label: "", action: () => undefined },
         { label: "编辑字号…", action: () => void toggleSettingsPanel() },
         { separator: true, label: "", action: () => undefined },
         { label: "全屏（编辑器）", action: () => execEditorCommand("mceFullScreen") }
@@ -737,11 +766,15 @@ async function initializeEditor(): Promise<void> {
         //       into that tab's snapshot.
         replaceActiveDocument({ ...state(), content: instance.getContent(), dirty: true });
         refreshDocumentHeader();
-        // 中文：大纲/搜索随内容实时刷新（各自内部判断当前模式是否可见，不可见时零开销）。
+        // 中文：大纲/搜索随内容实时刷新（各自内部判断当前模式是否可见，不可见时零开销）；
+        //       源码视图开启时镜像到源码框（源码框聚焦中则跳过，防 caret 冲突）。
         // English: Outline/search refresh live with the content (each internally checks whether
-        //       its mode is visible; zero cost while hidden).
+        //       its mode is visible; zero cost while hidden); with the source view active the text
+        //       mirrors into the textarea (skipped while the textarea is focused, avoiding caret
+        //       conflicts).
         refreshOutlineIfVisible();
         refreshSearchIfVisible();
+        refreshSourceTextFromEditor();
         setStatus("已修改，尚未保存");
       });
     }
@@ -757,6 +790,12 @@ async function initializeEditor(): Promise<void> {
   //       (the iframe gap in the 2026-11-14 outside-click fix).
   document.querySelector<HTMLIFrameElement>("#hugerte-editor_ifr")?.contentDocument
     ?.addEventListener("mousedown", () => { activeFloaterCloser?.(); });
+  // 中文：编辑器滚动 → 源码框比例同步（capture 级监听：滚动事件不冒泡，capture 才能收到
+  //       body/html 元素上的滚动）。W-hrt-P14 F1，评审 #4 定案为设置项（默认开）。
+  // English: Editor scroll → proportional source-textarea sync (capture-level listener: scroll
+  //       events do not bubble, so capture is required to see body/html scrolling). W-hrt-P14 F1;
+  //       review #4 decided it is a setting (on by default).
+  editor.getDoc()?.addEventListener("scroll", syncScrollFromEditorToSource, true);
   // 中文：状态栏计数中文化（维护者 2026-11-15 反馈："7 words" 需显示字符数等）——HugeRTE 内置
   //       计数为英文单值（"{0} words"）。方案：把内置计数按钮替换为中文双显示元素（字符 + 词），
   //       并监听插件派发的 `wordCountUpdate` 事件（携带 words/characters 统计）持续刷新。
@@ -796,6 +835,10 @@ async function replaceDocument(nextState: DocumentState): Promise<void> {
   await applyDocumentToEditor(nextState);
   isReplacingContent = false;
   refreshDocumentHeader();
+  // 中文：文档整体换入（新建/打开）后强制镜像源码框（即使聚焦也刷新，防旧文本回写进新文档）。
+  // English: After a wholesale document swap (new/open), force the source-textarea mirror (even
+  //       while focused, so the previous text cannot be written back into the new document).
+  refreshSourceTextFromEditor(true);
   resetExplorerFor(nextState);
   await renderExplorerTree();
 }
@@ -832,6 +875,10 @@ function resetExplorerFor(documentState: DocumentState): void {
  */
 async function switchToTab(index: number): Promise<void> {
   if (index < 0 || index >= tabs.length || index === activeIndex) return;
+  // 中文：源码视图开着先落盘源码编辑——下方快照读的是编辑器内容，不 flush 会读到过期文本。
+  // English: With the source view open, flush source edits first — the snapshot below reads the
+  //       editor's content, which would be stale without the flush.
+  await flushSourceEdits();
   isReplacingContent = true;
   if (editor) {
     const content = readEditorContent();
@@ -842,6 +889,10 @@ async function switchToTab(index: number): Promise<void> {
   isReplacingContent = false;
   refreshDocumentHeader();
   applyEditorFontSize();
+  // 中文：换 Tab 后强制镜像源码框（见 replaceDocument 同款理由）。
+  // English: After a tab switch, force the source-textarea mirror (same rationale as in
+  //       replaceDocument).
+  refreshSourceTextFromEditor(true);
   resetExplorerFor(state());
   await renderExplorerTree();
   setStatus("已切换标签页");
@@ -859,6 +910,10 @@ async function switchToTab(index: number): Promise<void> {
 async function closeTabByState(id: string): Promise<void> {
   const index = tabs.findIndex((tab) => tab.id === id);
   if (index === -1) return;
+  // 中文：脏确认前先落盘源码编辑——防抖未落的内容也要计入"未保存修改"并参与确认。
+  // English: Flush source edits before the dirty check — debounced-but-unapplied text must count
+  //       as unsaved work and join the confirmation.
+  await flushSourceEdits();
   if (tabs[index].document.dirty && !(await confirmDiscardChanges())) return;
   if (index === activeIndex && editor) {
     const content = readEditorContent();
@@ -871,6 +926,10 @@ async function closeTabByState(id: string): Promise<void> {
   await applyDocumentToEditor(state());
   refreshDocumentHeader();
   applyEditorFontSize();
+  // 中文：换入新活动 Tab 后强制镜像源码框（见 replaceDocument 同款理由）。
+  // English: After the new active tab loads, force the source-textarea mirror (same rationale as
+  //       in replaceDocument).
+  refreshSourceTextFromEditor(true);
   setStatus(tabs.length > 1 ? "已关闭标签页" : "已新建文档");
 }
 
@@ -903,6 +962,9 @@ function confirmDiscardChanges(): Promise<boolean> {
  * "replace current" semantics became "open in a new tab".
  */
 async function openPayload(payload: DocumentPayload): Promise<void> {
+  // 中文：快照前先落盘源码编辑（与 switchToTab 同款闸口）。
+  // English: Flush source edits before the snapshot (same gate as switchToTab).
+  await flushSourceEdits();
   if (!(await confirmDiscardChanges())) return;
   if (editor) {
     const content = readEditorContent();
@@ -1435,6 +1497,10 @@ function formatOpenedAt(stamp: string): string {
 
 async function saveDocument(forceSaveAs: boolean): Promise<void> {
   try {
+    // 中文：源码视图开着先落盘源码编辑——保存必须读到源码框的最新文本，而不是上一次回写的内容。
+    // English: With the source view open, flush source edits first — saving must observe the
+    //       textarea's latest text, not the previous apply-back's content.
+    await flushSourceEdits();
     restoreOriginalAssets();
     const content = readEditorContent();
     if (forceSaveAs || !state().path) {
@@ -2397,6 +2463,237 @@ function refreshSearchIfVisible(): void {
 
 /**
  * @lang zh-CN
+ * 源码视图三形态（W-hrt-P14 F1，原型 v1 稿 4/稿 5 + 评审 #4/#5 定案）：`modal` = HugeRTE
+ * code 插件的模态对话框（现状默认），`split` = 并排双栏（左可视化右源码、分隔条可拖、
+ * 同步滚动为设置项默认开），`full` = 整区切换（源码占满编辑区，可视化窗格隐藏）。
+ * 模式持久化到 localStorage（与侧栏模式同一机制）。
+ * @lang en
+ * Source view forms (W-hrt-P14 F1, prototype v1 drafts 4/5 + review decisions #4/#5): `modal` =
+ * HugeRTE code plugin's modal dialog (the current default), `split` = side by side (visual left,
+ * source right, draggable separator, sync scroll as a setting on by default), `full` = full-area
+ * switch (source fills the editor region, visual pane hidden). The mode persists to localStorage
+ * (same mechanism as the sidebar mode).
+ */
+type SourceViewMode = "modal" | "split" | "full";
+
+/** @lang zh-CN 源码视图模式持久化键。 / @lang en Persistence key for the source view mode. */
+const SOURCE_VIEW_KEY = "hia-hugerte.source-view";
+/** @lang zh-CN 源码栏宽度持久化键。 / @lang en Persistence key for the source pane width. */
+const SOURCE_WIDTH_KEY = "hia-hugerte.source-width";
+/** @lang zh-CN 同步滚动设置持久化键（评审 #4：设置项，默认开）。 / @lang en Persistence key for the sync-scroll setting (review #4: a setting, on by default). */
+const SOURCE_SYNC_SCROLL_KEY = "hia-hugerte.source-sync-scroll";
+
+/** @lang zh-CN 源码栏宽度边界与默认值（px）：220 保证源码可读；再为可视化窗格保留至少 320px。 / @lang en Source pane width bounds and default (px): 220 keeps the source readable; at least 320px stays reserved for the visual pane. */
+const SOURCE_MIN_WIDTH = 220;
+const SOURCE_DEFAULT_WIDTH = 340;
+
+/** @lang zh-CN 当前源码视图模式（持久化；非法值回落 modal）。 / @lang en The current source view mode (persisted; invalid values fall back to modal). */
+let sourceViewMode: SourceViewMode = (() => {
+  const stored = localStorage.getItem(SOURCE_VIEW_KEY);
+  return stored === "split" || stored === "full" || stored === "modal" ? stored : "modal";
+})();
+
+/** @lang zh-CN 持久化的源码栏宽度（非法或缺失时回退默认 340）。 / @lang en The persisted source pane width (falls back to the 340 default when missing or invalid). */
+const storedSourceWidth = Number(localStorage.getItem(SOURCE_WIDTH_KEY));
+let sourceWidth = Number.isFinite(storedSourceWidth) && storedSourceWidth >= SOURCE_MIN_WIDTH ? storedSourceWidth : SOURCE_DEFAULT_WIDTH;
+
+/** @lang zh-CN 同步滚动设置（默认开；checkbox 即时改写并持久化）。 / @lang en The sync-scroll setting (on by default; the checkbox flips and persists it immediately). */
+let sourceSyncScrollEnabled = localStorage.getItem(SOURCE_SYNC_SCROLL_KEY) !== "0";
+
+/** @lang zh-CN 源码栏拖拽会话状态（与侧栏分隔条同一 pointer-capture 模式）。 / @lang en In-drag session state for the source separator (same pointer-capture pattern as the explorer's). */
+let sourceResizeDrag: { pointerId: number; startX: number; startWidth: number } | null = null;
+
+/** @lang zh-CN 把源码栏宽度夹进合法区间：固定 [220, 工作台−320]，窗口极窄时下限优先。 / @lang en Clamp the source pane width into its legal range: fixed [220, workbench−320]; the floor wins on very narrow windows. */
+function clampSourceWidth(width: number): number {
+  const dynamicMax = Math.max(SOURCE_MIN_WIDTH, workbench.clientWidth - 320);
+  return Math.min(dynamicMax, Math.max(SOURCE_MIN_WIDTH, Math.round(width)));
+}
+
+/**
+ * @lang zh-CN
+ * 把当前源码视图模式应用到 DOM：`data-source-view` 驱动 CSS（full 隐藏编辑窗格）、面板/分隔条
+ * 显隐、宽度 flex（split 固定值 / full 吃满）、同步滚动开关仅 split 有意义故随之显隐；分隔条
+ * ARIA 值域同步。
+ * @lang en
+ * Apply the current source view mode to the DOM: `data-source-view` drives the CSS (full hides the
+ * editor pane), pane/separator visibility, the width flex (fixed for split / filling for full), and
+ * the sync-scroll toggle (only meaningful in split, so it hides elsewhere); separator ARIA values
+ * stay in sync.
+ */
+function applySourceViewLayout(): void {
+  workbench.dataset.sourceView = sourceViewMode;
+  sourcePane.hidden = sourceViewMode === "modal";
+  sourceResizer.hidden = sourceViewMode !== "split";
+  sourcePane.style.flex = sourceViewMode === "full" ? "1 1 auto" : `0 0 ${sourceWidth}px`;
+  sourceSyncLabel.hidden = sourceViewMode !== "split";
+  sourceResizer.setAttribute("aria-valuemin", String(SOURCE_MIN_WIDTH));
+  sourceResizer.setAttribute("aria-valuemax", String(Math.max(SOURCE_MIN_WIDTH, workbench.clientWidth - 320)));
+  sourceResizer.setAttribute("aria-valuenow", String(sourceWidth));
+}
+
+/** @lang zh-CN 源码回写的异步序号：仅最新一次 apply 允许落到编辑器（防快速输入时旧异步覆盖新内容）。 / @lang en Sequence for source apply-backs: only the latest apply may land in the editor (prevents a slower older async from overwriting newer text). */
+let sourceApplySequence = 0;
+
+/** @lang zh-CN 防抖计时器与在途回写 Promise（flush 用其等待在途回写完成）。 / @lang en Debounce timer and the in-flight apply promise (flush awaits it). */
+let sourceApplyTimer: number | null = null;
+let sourceApplyInFlight: Promise<void> | null = null;
+
+/**
+ * @lang zh-CN
+ * 把源码框文本回写到编辑器（防抖的落点）：先把内容与脏标记写入活动 Tab 快照，再经
+ * `rewriteRelativeAssetsInHtml` 生成可显示内容注入编辑器（资源引用还原为 data URI 供 WebView
+ * 显示），随后手工恢复 dirty（applyDocumentToEditor 的 setDirty(false) 会清掉）并刷新头部。
+ * 已知取舍：`undoManager.clear()` 使回写后编辑器 undo 栈清空（与切 Tab 同款）。
+ * @lang en
+ * Write the source textarea's text back into the editor (the debounce target): first record the
+ * content and dirty flag into the active tab's snapshot, then build displayable content via
+ * `rewriteRelativeAssetsInHtml` (asset refs re-inlined as data URIs for the WebView) and inject it,
+ * then manually restore dirty (applyDocumentToEditor's setDirty(false) clears it) and refresh the
+ * header. Recorded trade-off: `undoManager.clear()` empties the editor's undo stack after a
+ * write-back (same as tab switching).
+ */
+function applySourceTextToEditor(): Promise<void> {
+  if (!editor || sourceViewMode === "modal") return Promise.resolve();
+  const text = sourceTextarea.value;
+  const sequence = ++sourceApplySequence;
+  isReplacingContent = true;
+  replaceActiveDocument({ ...state(), content: text, dirty: true });
+  const run = async (): Promise<void> => {
+    try {
+      const displayContent = await rewriteRelativeAssetsInHtml(text, state().baseDir);
+      // 中文：回写期间用户可能继续输入（新序号已开）——旧异步到此作废，避免整段覆盖新文本。
+      // English: The user may keep typing during the write-back (a newer sequence exists) — the
+      //          older async aborts here so it cannot overwrite the newer text wholesale.
+      if (sequence !== sourceApplySequence || !editor) return;
+      editor.setContent(displayContent);
+      editor.undoManager.clear();
+      editor.setDirty(false);
+      replaceActiveDocument({ ...state(), dirty: true });
+      refreshDocumentHeader();
+      refreshOutlineIfVisible();
+      refreshSearchIfVisible();
+    } finally {
+      // 中文：仅最新一次回写负责复位 isReplacingContent（被更新的回写接手时不复位，防漏保护窗口）。
+      // English: Only the latest apply resets isReplacingContent (a superseded apply leaves it set
+      //          for its successor, keeping the guard window intact).
+      if (sequence === sourceApplySequence) {
+        sourceApplyInFlight = null;
+        isReplacingContent = false;
+      }
+    }
+  };
+  sourceApplyInFlight = run();
+  return sourceApplyInFlight;
+}
+
+/** @lang zh-CN 源码输入的 300ms 防抖：连续键入只在停顿后回写一次（大文档整段 setContent 的开销可控）。 / @lang en A 300ms debounce for source typing: continuous keystrokes write back once after the pause (keeps whole-text setContent cost bounded on large documents). */
+function scheduleSourceApply(): void {
+  if (sourceApplyTimer !== null) window.clearTimeout(sourceApplyTimer);
+  sourceApplyTimer = window.setTimeout(() => {
+    sourceApplyTimer = null;
+    void applySourceTextToEditor();
+  }, 300);
+}
+
+/**
+ * @lang zh-CN
+ * 立即落盘源码编辑（保存/切 Tab/关 Tab/打开/退出源码视图前的统一闸口）：有待执行防抖则取消并
+ * 立即回写；有在途回写则等它完成——保证后续 `readEditorContent()` 读到源码框的最新文本。
+ * @lang en
+ * Flush pending source edits (the single gate before save/tab-switch/tab-close/open/leaving the
+ * source view): cancel and run a pending debounce immediately, and await any in-flight apply —
+ * so the following `readEditorContent()` observes the textarea's latest text.
+ */
+async function flushSourceEdits(): Promise<void> {
+  if (sourceApplyTimer !== null) {
+    window.clearTimeout(sourceApplyTimer);
+    sourceApplyTimer = null;
+    await applySourceTextToEditor();
+    return;
+  }
+  if (sourceApplyInFlight) await sourceApplyInFlight;
+}
+
+/**
+ * @lang zh-CN
+ * 编辑器 → 源码框镜像（可视化窗格编辑时保持源码框同步）：`force` 用于文档整体换入
+ * （切 Tab/新建/打开——必须刷新，即使源码框仍聚焦，否则旧文档文本会被下一次回写误写进新文档）；
+ * 常规编辑镜像跳过聚焦中的源码框（防 caret 冲突），并保留滚动位置。
+ * @lang en
+ * Editor → source-textarea mirror (keeps the source in sync while editing the visual pane): `force`
+ * serves wholesale document swaps (tab switch/new/open — must refresh even when the textarea is
+ * focused, otherwise the previous document's text would be written into the new one by the next
+ * apply-back); ordinary mirrors skip a focused textarea (caret conflict) and preserve scroll.
+ */
+function refreshSourceTextFromEditor(force = false): void {
+  if (sourceViewMode === "modal" || !editor) return;
+  if (!force && document.activeElement === sourceTextarea) return;
+  const previousScrollTop = sourceTextarea.scrollTop;
+  sourceTextarea.value = state().content;
+  sourceTextarea.scrollTop = previousScrollTop;
+}
+
+/**
+ * @lang zh-CN
+ * 切换源码视图形态（「查看」菜单入口）：离开源码形态先 flush（模态下不读源码框）；进入
+ * split/full 用 `readEditorContent()`（含资源引用还原）填充源码框并聚焦；模式持久化。
+ * @lang en
+ * Switch the source view form (View-menu entries): leaving a source form flushes first (the modal
+ * form never reads the textarea); entering split/full fills the textarea via `readEditorContent()`
+ * (asset refs restored) and focuses it; the mode persists.
+ */
+async function setSourceViewMode(mode: SourceViewMode): Promise<void> {
+  if (mode === sourceViewMode) return;
+  if (sourceViewMode !== "modal") await flushSourceEdits();
+  sourceViewMode = mode;
+  localStorage.setItem(SOURCE_VIEW_KEY, mode);
+  applySourceViewLayout();
+  if (mode !== "modal") {
+    sourceTextarea.value = readEditorContent();
+    sourceTextarea.focus();
+  }
+}
+
+/** @lang zh-CN 同步滚动的互斥锁：程序化滚动触发的事件在下一帧前被忽略，防两向映射互相追问。 / @lang en The sync-scroll mutex: programmatic scrolls ignore resulting events until the next frame, so the two mappings cannot feed back into each other. */
+let sourceScrollSyncLock = false;
+
+/** @lang zh-CN 把编辑器滚动位置按比例映射到源码框（split 且开关打开时）。 / @lang en Map the editor's scroll position onto the source textarea proportionally (in split with the toggle on). */
+function syncScrollFromEditorToSource(): void {
+  if (!sourceSyncScrollEnabled || sourceViewMode !== "split" || sourceScrollSyncLock) return;
+  const editorScrollElement = editor?.getDoc()?.scrollingElement ?? null;
+  if (!editorScrollElement) return;
+  const maxEditor = editorScrollElement.scrollHeight - editorScrollElement.clientHeight;
+  const maxSource = sourceTextarea.scrollHeight - sourceTextarea.clientHeight;
+  if (maxEditor <= 0 || maxSource <= 0) return;
+  sourceScrollSyncLock = true;
+  sourceTextarea.scrollTop = (editorScrollElement.scrollTop / maxEditor) * maxSource;
+  // 中文：用短计时器释放互斥锁而非 rAF——滚动事件在渲染步派发（先于计时器），真实浏览器同样
+  //       安全；rAF 在部分嵌入式环境会被节流导致锁死（2026-11-17 探针实测）。
+  // English: Release the mutex with a short timer instead of rAF — scroll events dispatch in the
+  //       rendering step (before timers), so this stays safe in real browsers; rAF gets throttled
+  //       in some embedded environments and would deadlock the lock (measured in the 2026-11-17
+  //       probe).
+  window.setTimeout(() => { sourceScrollSyncLock = false; }, 30);
+}
+
+/** @lang zh-CN 把源码框滚动位置按比例映射回编辑器（split 且开关打开时）。 / @lang en Map the source textarea's scroll position back onto the editor proportionally (in split with the toggle on). */
+function syncScrollFromSourceToEditor(): void {
+  if (!sourceSyncScrollEnabled || sourceViewMode !== "split" || sourceScrollSyncLock) return;
+  const editorScrollElement = editor?.getDoc()?.scrollingElement ?? null;
+  if (!editorScrollElement) return;
+  const maxEditor = editorScrollElement.scrollHeight - editorScrollElement.clientHeight;
+  const maxSource = sourceTextarea.scrollHeight - sourceTextarea.clientHeight;
+  if (maxEditor <= 0 || maxSource <= 0) return;
+  sourceScrollSyncLock = true;
+  editorScrollElement.scrollTop = (sourceTextarea.scrollTop / maxSource) * maxEditor;
+  // 中文：同上——计时器释放互斥锁，兼容 rAF 被节流的环境。
+  // English: Same as above — release the mutex with a timer, tolerating environments where rAF is
+  //       throttled.
+  window.setTimeout(() => { sourceScrollSyncLock = false; }, 30);
+}
+
+/**
+ * @lang zh-CN
  * 启动参数多文件（ADR-0005 第 3 条）：全部开为 Tab（首个活动），解除初版"仅开第一个"限制；
  * 达上限时对剩余文件提示。
  * @lang en
@@ -2463,6 +2760,50 @@ explorerModes.addEventListener("click", (event) => {
 //          to 20 tabs; add throttling later only if large documents stutter — a recorded
 //          trade-off).
 explorerSearchInput.addEventListener("input", () => refreshSearchIfVisible());
+// 中文：源码视图（W-hrt-P14 F1）接线——同步滚动开关（即时持久化）、源码输入防抖回写、
+//       源码框滚动反向映射、分隔条拖拽与键盘微调、启动恢复布局与宽度。
+// English: Source view (W-hrt-P14 F1) wiring — the sync-scroll toggle (persisted immediately),
+//       debounced apply-back on source input, reverse scroll mapping, separator drag and keyboard
+//       nudges, and startup restore of layout and width.
+sourceSyncCheckbox.checked = sourceSyncScrollEnabled;
+sourceSyncCheckbox.addEventListener("change", () => {
+  sourceSyncScrollEnabled = sourceSyncCheckbox.checked;
+  localStorage.setItem(SOURCE_SYNC_SCROLL_KEY, sourceSyncScrollEnabled ? "1" : "0");
+});
+sourceTextarea.addEventListener("input", () => scheduleSourceApply());
+sourceTextarea.addEventListener("scroll", syncScrollFromSourceToEditor);
+// 中文：源码栏在右侧——拖分隔条向左（dx<0）才是加宽，方向与左侧的资源管理器分隔条相反；
+//       键盘同理（←加宽、→收窄）。
+// English: The source pane sits on the right — dragging the separator left (dx<0) widens it, the
+//       opposite of the explorer's left-side separator; keyboard mirrors that (← widens, → narrows).
+sourceResizer.addEventListener("pointerdown", (event) => {
+  if (sourceResizer.hidden) return;
+  sourceResizeDrag = { pointerId: event.pointerId, startX: event.clientX, startWidth: sourceWidth };
+  sourceResizer.setPointerCapture(event.pointerId);
+  document.body.classList.add("source-resizing");
+});
+sourceResizer.addEventListener("pointermove", (event) => {
+  if (!sourceResizeDrag || event.pointerId !== sourceResizeDrag.pointerId) return;
+  sourceWidth = clampSourceWidth(sourceResizeDrag.startWidth - (event.clientX - sourceResizeDrag.startX));
+  applySourceViewLayout();
+});
+const endSourceResize = (event: PointerEvent): void => {
+  if (!sourceResizeDrag || event.pointerId !== sourceResizeDrag.pointerId) return;
+  sourceResizeDrag = null;
+  document.body.classList.remove("source-resizing");
+  localStorage.setItem(SOURCE_WIDTH_KEY, String(sourceWidth));
+};
+sourceResizer.addEventListener("pointerup", endSourceResize);
+sourceResizer.addEventListener("pointercancel", endSourceResize);
+sourceResizer.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  event.preventDefault();
+  sourceWidth = clampSourceWidth(sourceWidth + (event.key === "ArrowLeft" ? 16 : -16));
+  applySourceViewLayout();
+  localStorage.setItem(SOURCE_WIDTH_KEY, String(sourceWidth));
+});
+sourceWidth = clampSourceWidth(sourceWidth);
+applySourceViewLayout();
 explorerUpButton.addEventListener("click", () => {
   const parent = parentPath(explorerRootPath);
   if (parent) void setExplorerRoot(parent);
