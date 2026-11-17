@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, SESSION_TAB_LIMIT } from "./session";
+import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, resolveRestoredActiveOrdinal, SESSION_TAB_LIMIT } from "./session";
 
 function sourceTab(path: string | null, pinned = false, alias: string | null = null) {
   return { pinned, alias, document: { path } };
@@ -49,6 +49,35 @@ describe("会话记录规约（W-hrt-P14 F5）", () => {
     expect(normalized!.tabs).toHaveLength(1);
     expect(normalized!.tabs[0]).toEqual({ path: "K:\\a.html", pinned: false, alias: "别名" });
     expect(normalized!.activeIndex).toBe(0);
+  });
+});
+
+describe("会话恢复的活动 Tab 定位（缺陷回归防护 2026-11-17）", () => {
+  it("全部成功时活动序号原样保留", () => {
+    expect(resolveRestoredActiveOrdinal([true, true, true], 0)).toBe(0);
+    expect(resolveRestoredActiveOrdinal([true, true, true], 2)).toBe(2);
+  });
+
+  it("失效项被跳过时活动 Tab 落在正确文档上（不串到相邻）", () => {
+    // 中文：存档 [a, b, c]，b 失效，活动是 c（序号 2）→ 成功序列 [a, c] 内 c 的序号是 1。
+    //       这正是重启后「显示成另一篇」缺陷的最小复现：若按原下标推算会得到 out-of-range 或 0。
+    // English: Archive [a, b, c] with b missing and c active (ordinal 2) → within the successful
+    //          sequence [a, c] the answer is 1. This is the minimal reproduction of the "shows a
+    //          different document after restart" defect: naive index arithmetic yields out-of-range
+    //          or 0.
+    expect(resolveRestoredActiveOrdinal([true, false, true], 2)).toBe(1);
+  });
+
+  it("活动项本身失效时夹取到它之前的最后一个成功项", () => {
+    expect(resolveRestoredActiveOrdinal([true, true, false], 2)).toBe(1);
+    expect(resolveRestoredActiveOrdinal([true, false, false], 1)).toBe(0);
+  });
+
+  it("无成功项返回 -1，越界序号夹取", () => {
+    expect(resolveRestoredActiveOrdinal([false, false], 0)).toBe(-1);
+    expect(resolveRestoredActiveOrdinal([], 0)).toBe(-1);
+    expect(resolveRestoredActiveOrdinal([true, true], 99)).toBe(1);
+    expect(resolveRestoredActiveOrdinal([true, true], -5)).toBe(0);
   });
 });
 

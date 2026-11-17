@@ -39,6 +39,32 @@ export interface SessionSourceTab {
 
 /**
  * @lang zh-CN
+ * 会话恢复的**结果定位**纯逻辑（W-hrt-P14 F5，缺陷回归防护 2026-11-17）：给定「存档 Tab 顺序」、
+ * 「每个存档项是否恢复成功」与「存档活动序号」，返回活动 Tab 在**成功序列**中的序号。
+ * 关键不变量：失效项被跳过时，活动序号只在成功序列内夹取——绝不因跳过而指向相邻文档。
+ * 返回 -1 表示没有任何成功项。
+ * @lang en
+ * Pure result-location logic for session restore (W-hrt-P14 F5, regression guard 2026-11-17):
+ * given the archive order, a per-entry "restored successfully" flag list and the archived active
+ * ordinal, return the active tab's ordinal within the **successful sequence**. Key invariant: when
+ * entries fail and are skipped, the active ordinal clamps inside the successful sequence — it can
+ * never point at a neighbouring document because of a skip. -1 means nothing succeeded.
+ */
+export function resolveRestoredActiveOrdinal(successFlags: boolean[], archivedActiveIndex: number): number {
+  const successCount = successFlags.filter(Boolean).length;
+  if (successCount === 0) return -1;
+  // 中文：存档活动序号 → 在成功序列中的序号：数一数它之前有多少个成功项。
+  //       活动项本身失败时落到「它之前的成功项数」（夹取到末尾），与运行期实现一致。
+  // English: Archive active ordinal → ordinal within the successful sequence: count how many
+  //          successes precede it. When the active entry itself failed, fall back to the number of
+  //          successes before it (clamped at the end), matching the runtime implementation.
+  const clamped = Math.min(Math.max(archivedActiveIndex, 0), successFlags.length - 1);
+  const preceding = successFlags.slice(0, clamped).filter(Boolean).length;
+  return Math.min(preceding, successCount - 1);
+}
+
+/**
+ * @lang zh-CN
  * 由当前 Tab 组构造会话记录：过滤未命名 Tab（无路径）→ 截断到上限 → 以**过滤后**的
  * 活动位置重算 activeIndex（原索引越过过滤边界时夹到最后一片）。
  * @lang en

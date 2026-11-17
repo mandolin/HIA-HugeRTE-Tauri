@@ -29,7 +29,7 @@ import {
   HUGERTE_COMPATIBILITY_TOOLBAR
 } from "./editor/hugerte-compatibility-config";
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
-import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, type DraftRecord, type SessionRecord } from "./session";
+import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, resolveRestoredActiveOrdinal, type DraftRecord, type SessionRecord } from "./session";
 import { createIcon, type IconName } from "./ui/icons";
 import { scanContentLineHits } from "./ui/sidebar-search";
 import "./styles.css";
@@ -1012,6 +1012,11 @@ async function applyDocumentToEditor(documentState: DocumentState): Promise<void
   //       nothing while hidden.
   refreshOutlineIfVisible();
   refreshSearchIfVisible();
+  // 中文：内容整体换入后同步源码框——启动恢复不经过编辑事件，靠这里填充（缺陷修复 2026-11-17）。
+  // English: Mirrors the source textarea after a wholesale content swap — startup restore never
+  //       goes through edit events, so this is where the textarea gets filled (defect fix
+  //       2026-11-17).
+  primeSourceTextarea();
 }
 
 function applyEditorFontSize(): void {
@@ -3104,6 +3109,12 @@ async function setSourceViewMode(mode: SourceViewMode): Promise<void> {
   }
 }
 
+/** @lang zh-CN 启动/恢复时按当前形态填充源码框（W-hrt-P14 缺陷修复 2026-11-17）：`applySourceViewLayout` 只切布局不写内容，上次停在 split/full 时重启会让源码栏空白。 / @lang en Fill the source textarea for the current form at startup/restore (W-hrt-P14 defect fix 2026-11-17): `applySourceViewLayout` only switches layout and writes no content, so restarting while split/full was active left the source pane blank. */
+function primeSourceTextarea(): void {
+  if (sourceViewMode === "modal" || !editor) return;
+  sourceTextarea.value = readEditorContent();
+}
+
 /** @lang zh-CN 同步滚动的互斥锁：程序化滚动触发的事件在下一帧前被忽略，防两向映射互相追问。 / @lang en The sync-scroll mutex: programmatic scrolls ignore resulting events until the next frame, so the two mappings cannot feed back into each other. */
 let sourceScrollSyncLock = false;
 
@@ -3208,51 +3219,74 @@ async function restoreSession(): Promise<boolean> {
   try { raw = await invoke<unknown>("session_load"); } catch { raw = null; }
   const record: SessionRecord | null = normalizeSessionRecord(raw);
   if (!record) return false;
-  let nextTabs = tabs;
-  /** @lang zh-CN 存档 Tab 在 nextTabs 中的最终下标（按成功打开顺序；失效文件不入列）。 / @lang en Final indexes of archived tabs within nextTabs (in successful-open order; missing files stay out). */
-  const restoredIndexes: number[] = [];
+
+  // 中文：先决定初始未命名 Tab 的去留，**再**逐个打开——顺序反了会让所有恢复下标错位一位
+  //       （实测缺陷 2026-11-17：重启后活动 Tab 指到相邻文档、内容显示成另一篇）。
+  //       未被触碰的初始 Tab 丢弃（避免多出一片空白 Tab）；用户已编辑过则保留（内容已在
+  //       编辑事件里写回其 DocumentState，不会丢）。
+  // English: Decide the initial untitled tab's fate **before** opening anything — the reverse
+  //       order shifts every restored index by one (measured defect 2026-11-17: after a restart
+  //       the active tab pointed at a neighbouring document and showed another file's content).
+  //       An untouched seed tab is dropped (no stray blank tab); an edited one is kept (its content
+  //       was already written back by edit events, so nothing is lost).
+  const seedUntouched = tabs.length === 1 && !tabs[0].document.dirty && tabs[0].document.path === null;
+  let nextTabs: TabState[] = seedUntouched ? [] : [...tabs];
+  /** @lang zh-CN 成功恢复的 Tab id（按存档顺序；失效文件不入列——固定/别名与活动索引都据此定位，不再用下标推算）。 / @lang en Ids of successfully restored tabs (in archive order; missing files stay out — pinned/alias and the active index locate through these ids instead of index arithmetic). */
+  const restoredTabIds: string[] = [];
+  /** @lang zh-CN 与 record.tabs 逐项对齐的成功标记（交给纯函数定位活动序号）。 / @lang en Success flags aligned one-to-one with record.tabs (fed to the pure function that locates the active ordinal). */
+  const restoredFlags: boolean[] = [];
   let skipped = 0;
   for (const entry of record.tabs) {
     try {
-      // 中文：存档路径可能带 canonicalize 的 `\\?\` 前缀（打开时由原生层返回）——交给
-      //       open_document_path 前先归一化为常规 `C:\...` 形式，避免存档把内部形态外泄到
-      //       历史记录与界面。
-      // English: Archived paths may carry canonicalize's `\\?\` prefix (returned by the native
-      //       layer on open) — normalize to the ordinary `C:\...` form before handing it to
-      //       open_document_path, so the internal shape never leaks into history or the UI.
+      // 中文：存档路径可能带 canonicalize 的 `\\?\` 前缀——交给 open_document_path 前归一化。
+      // English: Archived paths may carry canonicalize's `\\?\` prefix — normalize before handing
+      //       it to open_document_path.
       const payload = await invoke<DocumentPayload>("open_document_path", { path: normalizeWindowsPath(entry.path) });
       const appended = appendDocumentTab(nextTabs, documentFromPayload(payload));
-      if (!appended) { skipped += 1; continue; }
+      if (!appended) { skipped += 1; restoredFlags.push(false); continue; }
       nextTabs = appended;
-      restoredIndexes.push(nextTabs.length - 1);
+      restoredFlags.push(true);
+      // 中文：固定/别名**就地**回填到刚追加的这一片——不依赖下标映射，中途失效也不会串位。
+      // English: Pinned/alias fill in **inline** on the tab just appended — no index mapping, so a
+      //       mid-list failure cannot shift them onto a neighbouring tab.
+      const tabId = nextTabs[nextTabs.length - 1].id;
+      if (entry.pinned) nextTabs = setTabPinned(nextTabs, tabId, true);
+      if (entry.alias) nextTabs = setTabAlias(nextTabs, tabId, entry.alias);
+      restoredTabIds.push(tabId);
     } catch {
       // 中文：失效路径（已删除/无权限）逐个跳过——恢复不是关键路径，绝不阻断启动。
       // English: Missing paths (deleted/no permission) skip individually — restoring is not a
       //          critical path and must never block startup.
       skipped += 1;
+      restoredFlags.push(false);
     }
   }
-  if (restoredIndexes.length === 0) return false;
-  // 中文：固定/别名按存档顺序回填到对应新 Tab 上。
-  // English: Pinned/alias fill back onto the matching new tabs in archive order.
-  const successful = record.tabs.filter((_, index) => index < restoredIndexes.length);
-  restoredIndexes.forEach((tabIndex, order) => {
-    const entry = successful[order];
-    if (!entry) return;
-    const tabId = nextTabs[tabIndex].id;
-    if (entry.pinned) nextTabs = setTabPinned(nextTabs, tabId, true);
-    if (entry.alias) nextTabs = setTabAlias(nextTabs, tabId, entry.alias);
-  });
-  // 中文：起始的「未命名文档」Tab 从未被使用过才移除（用户已在启动前编辑过则保留其内容）。
-  // English: Drop the initial untitled tab only when it was never touched (if the user edited
-  //          before startup finished, its content stays).
-  if (!tabs[0].document.dirty && tabs[0].document.path === null) {
-    nextTabs = nextTabs.filter((_, index) => index !== 0);
-  }
+  if (restoredTabIds.length === 0) return false;
+
+  // 中文：活动 Tab 由纯函数定位（`resolveRestoredActiveOrdinal`，与单测同源）——存档活动序号
+  //       夹取到成功序列内，再按 id 反查最终下标；失效跳过与初始 Tab 去留都不影响结果。
+  // English: The active tab is located by the pure function (`resolveRestoredActiveOrdinal`, the
+  //       same code the unit tests exercise) — the archived active ordinal clamps inside the
+  //       successful sequence, then the final index comes from an id lookup; neither skips nor the
+  //       seed-tab decision can shift it.
+  const activeOrdinal = resolveRestoredActiveOrdinal(restoredFlags, record.activeIndex);
+  const targetId = activeOrdinal >= 0 ? restoredTabIds[activeOrdinal] : null;
+  const targetIndex = nextTabs.findIndex((tab) => tab.id === targetId);
   tabs = nextTabs;
-  const activeTarget = restoredIndexes[Math.min(record.activeIndex, restoredIndexes.length - 1)];
-  await switchToTab(activeTarget);
-  setStatus(skipped > 0 ? `已恢复 ${restoredIndexes.length} 个文档；${skipped} 个已失效被跳过` : `已恢复 ${restoredIndexes.length} 个文档`);
+  activeIndex = targetIndex >= 0 ? targetIndex : 0;
+  // 中文：直接换入目标内容——不走 switchToTab：其首步会用 `state()` 的前缀/后缀去快照编辑器
+  //       里**启动模板**的正文，从而把模板内容写进恢复文档（实测缺陷）；启动阶段编辑器里没有
+  //       需要保留的编辑，直接载入即可。
+  // English: Load the target content directly instead of going through switchToTab — its first
+  //       step would snapshot the **startup template** body out of the editor using the restored
+  //       document's prefix/suffix, writing template content into the restored file (a measured
+  //       defect). At startup the editor holds no edits worth preserving, so load straight away.
+  await applyDocumentToEditor(state());
+  refreshDocumentHeader();
+  applyEditorFontSize();
+  resetExplorerFor(state());
+  await renderExplorerTree();
+  setStatus(skipped > 0 ? `已恢复 ${restoredTabIds.length} 个文档；${skipped} 个已失效被跳过` : `已恢复 ${restoredTabIds.length} 个文档`);
   return true;
 }
 
