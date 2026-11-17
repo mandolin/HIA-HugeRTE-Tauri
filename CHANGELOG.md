@@ -2,6 +2,21 @@
 
 All notable public changes will be documented in this file.
 
+## v1.0.0 - 2026-11-18
+
+The `1.0.0` line freezes the public contracts: document format, keyboard shortcuts, the editor output contract, on-disk data files and interface-state keys are documented in [docs/contract-freeze.md](docs/contract-freeze.md) and guarded by contract tests. From this line onward, changing a frozen contract requires a major version and a migration note.
+
+- Added three switchable source-code views: **side-by-side** (visual left, source right, draggable separator, sync-scroll toggle), **full-area switch** and the existing modal dialog (Format → Source code). Line numbers in search results share the source view's coordinates.
+- Added three sidebar views — files, **document outline** (hierarchy guides, collapsible, click-to-jump) and **cross-tab search** (grouped by file, source line numbers, highlighted matches, click-to-jump) — switched by a mode strip; the chosen view is remembered.
+- Added three menu-bar modes: full, compact (folded into a "☰ Menu" grouped dropdown) and hidden; switchable from Settings and remembered.
+- Added an integrated application status bar: save state, character/word count, cursor line-column and UTF-8 encoding (replacing HugeRTE's built-in status bar).
+- Added **session restore**: file tabs (with pinned state and display aliases) reopen after a restart; startup arguments take priority.
+- Added **tab pinning** (pinned tabs cannot be closed accidentally and stay visible when the strip overflows) and **display aliases** (double-click a tab name; the file is never renamed).
+- Added **autosave drafts**: unsaved edits are written to the portable `data/autosave/` folder (1 s debounce) and offered back through a non-modal banner after a crash; saved documents clear their draft automatically.
+- Fixed document fidelity: opening and saving a complete HTML file — even with zero edits — preserves the doctype, `<head>`, `<meta charset>` and `<title>` (previously the editor pipeline dropped document-level head content after the first edit).
+- Fixed the tab strip leaving a stray blank "untitled" tab behind when files were opened through startup arguments or restored from a session.
+- All IPC commands that may block (registry queries, disk writes) now run off the main thread; floating surfaces close on `Esc` consistently.
+
 ## v0.4.0 - 2026-11-16
 
 - Added an application-level menu bar and toolbar (classic Windows shell layout): the banner keeps the brand and document summary with reserved space for future modules and only a Settings gear on the right; below it a menu bar (File / Edit / View / Insert / Format / Tools / Help) and a toolbar with icons (New / Open / Save / Save as / History | Tree).
