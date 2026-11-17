@@ -454,7 +454,7 @@ fn session_load() -> Option<SessionFile> {
 
 /// 中文：整份写回会话（原子写：临时文件再替换）；空会话即删除存档。失败静默。
 #[tauri::command]
-fn session_save(tabs: Vec<SessionTab>, active_index: usize) {
+async fn session_save(tabs: Vec<SessionTab>, active_index: usize) {
     save_session(SessionFile {
         version: 1,
         tabs,
@@ -482,7 +482,7 @@ fn save_session(mut session: SessionFile) {
 
 /// 中文：清除会话存档（用户关闭「会话恢复」设置项时调用）。
 #[tauri::command]
-fn session_clear() {
+async fn session_clear() {
     if let Some(store) = app_data_file("session.json", true) {
         let _ = fs::remove_file(store);
     }
@@ -559,7 +559,7 @@ fn load_drafts() -> Vec<DraftEntry> {
 
 /// 中文：写入/更新一份草稿（id 由前端生成 `draft-<n>`）：正文与清单分别原子写，超限淘汰最旧。
 #[tauri::command]
-fn autosave_write(id: String, origin: Option<String>, title: String, content: String) {
+async fn autosave_write(id: String, origin: Option<String>, title: String, content: String) {
     write_draft(DraftEntry {
         id,
         origin,
@@ -614,7 +614,7 @@ fn write_draft(entry: DraftEntry) {
 
 /// 中文：删除单份草稿（保存成功/关闭 Tab 时调用）。
 #[tauri::command]
-fn autosave_delete(id: String) {
+async fn autosave_delete(id: String) {
     delete_draft(&id);
 }
 
@@ -646,7 +646,7 @@ fn delete_draft(id: &str) {
 
 /// 中文：清空全部草稿（用户「全部丢弃」或关闭自动保存设置项时调用）。
 #[tauri::command]
-fn autosave_clear() {
+async fn autosave_clear() {
     let Some(dir) = autosave_dir(true) else {
         return;
     };
@@ -680,7 +680,7 @@ fn recent_files_load() -> Vec<RecentFileEntry> {
 /// 中文：记录一次成功打开（去重置顶 + FIFO 淘汰 + 原子写：临时文件再替换）。
 /// 失败静默——历史写入不影响编辑主流程。
 #[tauri::command]
-fn recent_files_record(path: String) {
+async fn recent_files_record(path: String) {
     record_recent_file(path);
 }
 
@@ -705,7 +705,7 @@ fn record_recent_file(path: String) {
 
 /// 中文：清空历史（前端经 DEF-1 确认模态后再调用）；删除底层文件即为清空。
 #[tauri::command]
-fn recent_files_clear() {
+async fn recent_files_clear() {
     if let Some(store) = recent_files_path(true) {
         let _ = fs::remove_file(store);
     }
@@ -889,7 +889,7 @@ fn association_is_registered(exe: &Path) -> bool {
 /// 中文：读取关联状态（只读；前端进入设置面时调用）。
 /// English: Read the association status (read-only; called when the frontend opens the settings surface).
 #[tauri::command]
-fn open_with_status() -> AssociationStatus {
+async fn open_with_status() -> AssociationStatus {
     let exe = std::env::current_exe().unwrap_or_default();
     AssociationStatus {
         registered: association_is_registered(&exe),
@@ -901,7 +901,7 @@ fn open_with_status() -> AssociationStatus {
 /// English: Register as an "Open with" candidate (explicit user action). Runs each command keeping
 /// the failure context and re-reads the state to verify success.
 #[tauri::command]
-fn open_with_register() -> Result<AssociationStatus, String> {
+async fn open_with_register() -> Result<AssociationStatus, String> {
     let exe = std::env::current_exe()
         .map_err(|error| format!("[registry.exe] 无法确定程序路径：{error}"))?;
     for operation in association_register_operations(&exe) {
@@ -920,7 +920,7 @@ fn open_with_register() -> Result<AssociationStatus, String> {
 /// English: Remove the "Open with" candidate registration (symmetric cleanup). Absent entries count
 /// as success (idempotent); the final re-read confirms the outcome.
 #[tauri::command]
-fn open_with_unregister() -> Result<AssociationStatus, String> {
+async fn open_with_unregister() -> Result<AssociationStatus, String> {
     let exe = std::env::current_exe()
         .map_err(|error| format!("[registry.exe] 无法确定程序路径：{error}"))?;
     for operation in association_unregister_operations() {

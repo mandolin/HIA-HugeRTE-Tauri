@@ -1399,9 +1399,10 @@ async function createDocument(): Promise<void> {
 async function toggleHistoryMenu(): Promise<void> {
   const existing = document.querySelector(".history-menu");
   if (existing) {
-    // 中文：经关闭器移除（顺带清掉编辑 iframe 缺口注册的引用与外点监听）。
-    // English: Remove via the closer (which also clears the iframe-gap registration and the outside listener).
-    activeFloaterCloser?.();
+    // 中文：经菜单**自身**挂载的关闭器移除（同设置面板修复——activeFloaterCloser 可被覆盖）。
+    // English: Close via the closer mounted **on the menu itself** (same fix as the settings panel —
+    //          activeFloaterCloser can be overwritten).
+    (existing as HTMLElement & { __close?: () => void }).__close?.();
     return;
   }
   if (isTauriRuntimeCheck()) {
@@ -1504,9 +1505,20 @@ async function toggleHistoryMenu(): Promise<void> {
     const closeHistoryMenu = (): void => {
       menu.remove();
       document.removeEventListener("mousedown", closeHistoryOnOutside, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
       if (activeFloaterCloser === closeHistoryMenu) activeFloaterCloser = null;
     };
+    // 中文：Esc 关闭（契约冻结 §2：Esc 关闭打开的下拉——与 app-menu 下拉一致）。
+    // English: Esc closes (contract freeze §2: Esc closes the open dropdown — consistent with the
+    //          app-menu dropdowns).
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") { event.preventDefault(); closeHistoryMenu(); }
+    };
+    // 中文：关闭器同时挂到菜单元素（同设置面板修复）。
+    // English: The closer also mounts on the menu element (same fix as the settings panel).
+    (menu as HTMLElement & { __close?: () => void }).__close = closeHistoryMenu;
     document.addEventListener("mousedown", closeHistoryOnOutside, true);
+    document.addEventListener("keydown", closeOnEscape, true);
     activeFloaterCloser = closeHistoryMenu;
   }
 }
@@ -1570,9 +1582,12 @@ let activeFloaterCloser: (() => void) | null = null;
 async function toggleSettingsPanel(): Promise<void> {
   const existing = document.querySelector(".settings-panel");
   if (existing) {
-    // 中文：经关闭器移除（与历史下拉同法）。
-    // English: Remove via the closer (same as the history dropdown).
-    activeFloaterCloser?.();
+    // 中文：经面板**自身**挂载的关闭器移除——activeFloaterCloser 会被后打开的浮层覆盖，
+    //       依赖它会让设置面板的开关失效（使用者旅程实测缺陷 2026-11-18）。
+    // English: Close via the closer mounted **on the panel itself** — activeFloaterCloser gets
+    //       overwritten by later floaters, which would break the settings toggle (measured in the
+    //       user-journey test, 2026-11-18).
+    (existing as HTMLElement & { __close?: () => void }).__close?.();
     return;
   }
   if (!isTauriRuntimeCheck()) return;
@@ -1847,9 +1862,21 @@ async function toggleSettingsPanel(): Promise<void> {
   const closeSettingsPanel = (): void => {
     panel.remove();
     document.removeEventListener("mousedown", closeSettingsOnOutside, true);
+    document.removeEventListener("keydown", closeOnEscape, true);
     if (activeFloaterCloser === closeSettingsPanel) activeFloaterCloser = null;
   };
+  // 中文：Esc 关闭（契约冻结 §2 措辞的一致性延伸：面板与模态/下拉同规则）。
+  // English: Esc closes (a consistency extension of contract freeze §2: panels follow the same
+  //          rule as modals/dropdowns).
+  const closeOnEscape = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") { event.preventDefault(); closeSettingsPanel(); }
+  };
+  // 中文：关闭器同时挂到面板元素——开关路径不再依赖可被覆盖的全局引用。
+  // English: The closer also mounts on the panel element — the toggle path no longer depends on
+  //          the overwritable global reference.
+  (panel as HTMLElement & { __close?: () => void }).__close = closeSettingsPanel;
   document.addEventListener("mousedown", closeSettingsOnOutside, true);
+  document.addEventListener("keydown", closeOnEscape, true);
   activeFloaterCloser = closeSettingsPanel;
 
   // 中文：数据加载改走会话缓存（维护者 2026-11-14 定案）——有缓存直接渲染（零延迟）；无缓存
@@ -3472,8 +3499,28 @@ async function openStartupDocuments(): Promise<boolean> {
       //       startup files is missing — defect surfaced by the release smoke).
       if (!historyDisabled && payload.path) void invoke("recent_files_record", { path: payload.path }).catch(() => undefined);
     }
+    // 中文：丢弃未被触碰的初始未命名 Tab（与 F5 会话恢复同规则，使用者旅程实测发现的既有
+    //       瑕疵：启动后残留一片空白 Tab）——启动阶段它不可能已被编辑，防御性判断保留。
+    // English: Drop the untouched initial untitled tab (the same rule as F5 session restore; a
+    //       pre-existing quirk found by the user-journey test: a blank tab lingered after
+    //       startup) — it cannot have been edited at startup; the defensive check stays.
+    if (!tabs[0].document.dirty && tabs[0].document.path === null) {
+      nextTabs = nextTabs.filter((_, index) => index !== 0);
+    }
     tabs = nextTabs;
-    await switchToTab(1 >= tabs.length ? 0 : 1);
+    activeIndex = 0;
+    // 中文：直接载入第一个文件——switchToTab 在目标下标等于当前活动下标时会早退，编辑器
+    //       仍显示启动模板（与 restoreSession 同款陷阱）。
+    // English: Load the first file directly — switchToTab early-returns when the target equals the
+    //       current active index, leaving the startup template on screen (the same trap as
+    //       restoreSession).
+    await applyDocumentToEditor(state());
+    refreshDocumentHeader();
+    applyEditorFontSize();
+    refreshSourceTextFromEditor(true);
+    resetExplorerFor(state());
+    await renderExplorerTree();
+    persistSession();
     setStatus(skipped > 0 ? `已打开 ${documents.length - skipped} 个传入文件；${skipped} 个因标签页上限被跳过` : documents.length > 1 ? `已通过系统文件入口打开 ${documents.length} 个文件` : "已通过系统文件入口打开");
     return true;
   } catch (error) { setStatus(`启动文件打开失败：${formatError(error)}`); return false; }
