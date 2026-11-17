@@ -19,7 +19,7 @@ import "hugerte/themes/silver";
 import "hugerte/skins/content/default/content";
 import "hugerte/skins/ui/oxide/skin";
 import { buildDiscardConfirmMessage, createNewDocument, documentFromPayload, ensureHtmlExtension, getDocumentLabel, splitDocumentParts, type DocumentPayload, type DocumentState } from "./document";
-import { appendDocumentTab, createUntitledTab, closeTab, MAX_TABS, overflowStartIndex, summarizeTabs, type TabState } from "./tabs";
+import { appendDocumentTab, createUntitledTab, closeTab, MAX_TABS, overflowStartIndex, setTabAlias, setTabPinned, summarizeTabs, TAB_ALIAS_MAX_LENGTH, type TabState } from "./tabs";
 import {
   buildDefaultCharacterMap,
   HUGERTE_COMPATIBILITY_CONTENT_STYLE,
@@ -29,6 +29,7 @@ import {
   HUGERTE_COMPATIBILITY_TOOLBAR
 } from "./editor/hugerte-compatibility-config";
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
+import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, type DraftRecord, type SessionRecord } from "./session";
 import { createIcon, type IconName } from "./ui/icons";
 import { scanContentLineHits } from "./ui/sidebar-search";
 import "./styles.css";
@@ -102,6 +103,16 @@ app.innerHTML = `
       </div>
       <div id="drop-indicator" class="drop-indicator" aria-hidden="true">释放以打开 HTML 文件</div>
     </section>
+    <!-- 中文：草稿恢复提示条（W-hrt-P14 F7 稿 4，定案⑥：非模态，可忽略继续）。启动时若存在
+         上次会话的未保存草稿，在此提示「恢复为 Tab / 全部丢弃」——不静默合并进已打开文件。 -->
+    <!-- English: The draft-recovery banner (W-hrt-P14 F7 draft 4, decision ⑥: non-modal, safe to
+         ignore). When last session's unsaved drafts exist at startup, it offers "restore as tabs /
+         discard all" — never silently merging into already opened files. -->
+    <div id="draft-banner" class="draft-banner" role="region" aria-label="未保存草稿" hidden>
+      <span id="draft-banner-text" class="draft-banner__text"></span>
+      <button id="draft-restore" type="button" class="draft-banner__primary">恢复为 Tab</button>
+      <button id="draft-discard" type="button" class="draft-banner__quiet">全部丢弃</button>
+    </div>
     <!-- 中文：应用级状态栏（W-hrt-P14 F4，原型稿 1）：保存状态 / 字符·词数 / 行列 / 编码格式。
          取代 HugeRTE 内置状态栏（statusbar:false）——整合后一行承载全部持久指示；
          瞬时操作消息仍在工具栏右端（#document-status）。 -->
@@ -140,6 +151,11 @@ const tabbar = requiredElement<HTMLDivElement>("#tabbar");
 const statusbarSave = requiredElement<HTMLSpanElement>("#status-save");
 const statusbarCount = requiredElement<HTMLSpanElement>("#status-count");
 const statusbarCursor = requiredElement<HTMLSpanElement>("#status-cursor");
+/** @lang zh-CN 草稿恢复提示条（W-hrt-P14 F7）：文案 + 恢复/丢弃按钮。 / @lang en The draft-recovery banner (W-hrt-P14 F7): copy plus restore/discard buttons. */
+const draftBanner = requiredElement<HTMLDivElement>("#draft-banner");
+const draftBannerText = requiredElement<HTMLSpanElement>("#draft-banner-text");
+const draftRestoreButton = requiredElement<HTMLButtonElement>("#draft-restore");
+const draftDiscardButton = requiredElement<HTMLButtonElement>("#draft-discard");
 const explorerPanel = requiredElement<HTMLElement>("#explorer");
 const explorerTree = requiredElement<HTMLDivElement>("#explorer-tree");
 const explorerScope = requiredElement<HTMLSpanElement>("#explorer-scope");
@@ -702,9 +718,16 @@ function renderAppToolbar(): void {
 function refreshDocumentHeader(): void {
   const summary = summarizeTabs(tabs);
   const label = getDocumentLabel(state().path);
+  // 中文：别名跟随（W-hrt-P14 F6 稿 3）——活动 Tab 有别名时显示「别名 (文件名)」；
+  //       窗口标题与头部摘要同规则；文件名永不因此改动。
+  // English: Alias follow-through (W-hrt-P14 F6 draft 3) — when the active tab has an alias it
+  //       renders as "alias (file name)"; the window title and header summary share the rule; the
+  //       on-disk file name is never touched.
+  const activeAlias = tabs[activeIndex].alias;
+  const display = activeAlias ? `${activeAlias} (${label})` : label;
   const summaryText = summary.total > 1 ? `${summary.total} 个文档 · ${summary.dirty} 个未保存` : (summary.dirty > 0 ? "1 个文档 · 1 个未保存" : "1 个文档");
-  documentPath.textContent = `${summaryText}：${summary.dirty > 0 && state().dirty ? "● " : ""}${label}`;
-  document.title = state().dirty ? `● ${label} — HIA HugeRTE` : `${label} — HIA HugeRTE`;
+  documentPath.textContent = `${summaryText}：${summary.dirty > 0 && state().dirty ? "● " : ""}${display}`;
+  document.title = `${state().dirty ? "● " : ""}${display} — HIA HugeRTE`;
   // 中文：状态栏「保存状态」跟随活动 Tab 的脏标记（W-hrt-P14 F4）。
   // English: The status bar's save state follows the active tab's dirty flag (W-hrt-P14 F4).
   statusbarSave.textContent = state().dirty ? "● 未保存" : "已保存";
@@ -712,53 +735,179 @@ function refreshDocumentHeader(): void {
   renderTabStrip();
 }
 
-/** @lang zh-CN 重绘 Tab 条；空 Tab 列表不会出现（closeTab 保证至少一片）。 / @lang en Re-render the tab strip; the list never empties (closeTab guarantees at least one tab). */
+/** @lang zh-CN Tab 显示文本：别名优先，否则文件名（Tab chip 首字符与 tooltip 同源）。 / @lang en Tab display text: alias first, else the file name (the pinned chip's first character and tooltips share this source). */
+function getTabDisplayText(tab: TabState): string {
+  return tab.alias ?? getDocumentLabel(tab.document.path);
+}
+
+/**
+ * @lang zh-CN
+ * Tab 别名内联编辑（W-hrt-P14 F6 稿 3，定案④）：双击 Tab 名称进入输入态——Enter/失焦确认、
+ * Esc 取消；提交经 setTabAlias 规整（去空白/30 字符/空清除）。输入态拦截 click/keydown
+ * 冒泡，防止触发 chip 的切换与快捷键。
+ * @lang en
+ * Inline tab-alias editing (W-hrt-P14 F6 draft 3, decision ④): double-click a tab's name to edit —
+ * Enter/blur commits, Esc cancels; submission normalizes via setTabAlias (trim/30-char cap/blank
+ * clears). The input stops click/keydown propagation so the chip's switch and shortcut handlers
+ * never fire mid-edit.
+ */
+function startTabAliasEdit(tabId: string, nameSpan: HTMLElement): void {
+  const tab = tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "tab__edit";
+  input.value = tab.alias ?? "";
+  input.maxLength = TAB_ALIAS_MAX_LENGTH;
+  input.setAttribute("aria-label", "编辑标签页别名");
+  nameSpan.replaceWith(input);
+  input.focus();
+  input.select();
+  // 中文：提交闸门——Esc 置 cancelled 后任何后续 blur 一律不提交（实测教训：先重绘再 blur
+  //       会让 blur 处理器以旧值提交，把已取消的编辑写回）。Enter 走 blur → 正常提交。
+  // English: A commit gate — once Esc sets `cancelled`, any later blur commits nothing (measured
+  //       lesson: re-rendering before blur made the blur handler commit the cancelled value).
+  //       Enter goes through blur and commits normally.
+  let cancelled = false;
+  const commit = (): void => {
+    if (cancelled) return;
+    // 中文：提交即封闸——随后可能到达的 blur 不再二次提交（Enter 与失焦两条路径合一）。
+    // English: Commit closes the gate — a blur arriving afterwards never commits twice (the Enter
+    //       and blur paths collapse into one).
+    cancelled = true;
+    // 中文：提交后经 setTabAlias 规整并整条刷新（Tab chip + 头部摘要 + 窗口标题跟随别名）。
+    // English: On commit, normalize via setTabAlias and refresh the whole strip (chips plus the
+    //       header summary and window title follow the alias).
+    tabs = setTabAlias(tabs, tabId, input.value);
+    refreshDocumentHeader();
+    // 中文：别名属会话结构（F5）——改名即写会话存档。
+    // English: Aliases are session structure (F5) — a rename writes the session archive.
+    persistSession();
+  };
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("mousedown", (event) => event.stopPropagation());
+  input.addEventListener("dblclick", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    // 中文：Enter 直接提交（不依赖 blur——输入框未真正聚焦时 blur 不会触发，实测教训）；
+    //       提交后重绘自然移除输入框，随后的 blur 由 cancelled 之外的幂等路径吸收。
+    // English: Enter commits directly (never rely on blur — it does not fire when the input never
+    //       took real focus, a measured lesson); the re-render removes the input, and the following
+    //       blur is absorbed by the idempotent path.
+    if (event.key === "Enter") { event.preventDefault(); commit(); return; }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelled = true;
+      renderTabStrip();
+    }
+  });
+  input.addEventListener("blur", commit);
+}
+
+/** @lang zh-CN 重绘 Tab 条；固定 Tab 始终可见（窄条形态），折叠只发生在非固定 Tab 上。 / @lang en Re-render the tab strip; pinned tabs stay visible (narrow chips) and collapsing only hits non-pinned tabs. */
 function renderTabStrip(): void {
   tabbar.textContent = "";
-  const overflowFrom = overflowStartIndex(tabs, activeIndex) ?? tabs.length;
+  const overflowStart = overflowStartIndex(tabs, activeIndex) ?? tabs.length;
+  const overflowing = overflowStart < tabs.length;
+  const isCollapsed = (tab: TabState, index: number): boolean => overflowing && !tab.pinned && index >= overflowStart && index !== activeIndex;
   tabs.forEach((tab, index) => {
-    if (index < overflowFrom && index !== activeIndex && overflowFrom < tabs.length) return;
+    if (isCollapsed(tab, index)) return;
     const chip = document.createElement("div");
-    chip.className = `tab${index === activeIndex ? " tab--active" : ""}`;
+    chip.className = `tab${index === activeIndex ? " tab--active" : ""}${tab.pinned ? " tab--pinned" : ""}`;
     chip.setAttribute("role", "tab");
     chip.setAttribute("aria-selected", String(index === activeIndex));
     chip.tabIndex = 0;
+    const displayText = getTabDisplayText(tab);
+    chip.title = tab.pinned ? `${displayText}（已固定）` : displayText;
     if (tab.document.dirty) {
       const dot = document.createElement("span");
       dot.className = "tab__dirty";
       dot.textContent = "●";
       chip.appendChild(dot);
     }
-    const name = document.createElement("span");
-    name.className = "tab__name";
-    name.textContent = getDocumentLabel(tab.document.path);
-    chip.appendChild(name);
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "tab__close";
-    close.textContent = "✕";
-    close.title = "关闭标签页";
-    close.addEventListener("click", (event) => { event.stopPropagation(); void closeTabByState(tab.id); });
-    chip.appendChild(close);
+    if (tab.pinned) {
+      // 中文：固定窄条（W-hrt-P14 F6 稿 2）——📌 点击解除（单一入口，定案③），首字符 + tooltip
+      //       全路径；关闭 ✕ 不渲染（防误关）。
+      // English: The pinned narrow chip (W-hrt-P14 F6 draft 2) — 📌 unpins (the single entry,
+      //       decision ③), with the first character and a full-path tooltip; no ✕ (accidental
+      //       closes are impossible).
+      const unpin = document.createElement("button");
+      unpin.type = "button";
+      unpin.className = "tab__pin";
+      unpin.textContent = "📌";
+      unpin.title = "解除固定";
+      unpin.addEventListener("click", (event) => {
+        event.stopPropagation();
+        tabs = setTabPinned(tabs, tab.id, false);
+        renderTabStrip();
+        persistSession();
+      });
+      chip.appendChild(unpin);
+      const char = document.createElement("span");
+      char.className = "tab__name";
+      char.textContent = displayText.charAt(0) || "？";
+      chip.appendChild(char);
+    } else {
+      const name = document.createElement("span");
+      name.className = "tab__name";
+      if (tab.alias) {
+        // 中文：别名 chip 形态（定案稿 3）：别名加粗 + 灰色括注文件名。
+        // English: The aliased chip form (draft 3): the alias in bold plus a dimmed parenthesised
+        //       file name.
+        const aliasText = document.createElement("b");
+        aliasText.textContent = tab.alias;
+        const original = document.createElement("span");
+        original.className = "tab__name-orig";
+        original.textContent = ` (${getDocumentLabel(tab.document.path)})`;
+        name.append(aliasText, original);
+      } else {
+        name.textContent = displayText;
+      }
+      name.addEventListener("dblclick", (event) => { event.stopPropagation(); startTabAliasEdit(tab.id, name); });
+      chip.appendChild(name);
+      // 中文：固定入口（定案稿 2）——chip 悬停时右上角显示 📌 小按钮，点击固定。
+      // English: The pin entry (draft 2) — a 📌 mini-button appears at the chip's top-right corner
+      //       on hover; clicking pins the tab.
+      const pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = "tab__pin tab__pin--hover";
+      pin.textContent = "📌";
+      pin.title = "固定标签页";
+      pin.addEventListener("click", (event) => {
+        event.stopPropagation();
+        tabs = setTabPinned(tabs, tab.id, true);
+        renderTabStrip();
+        persistSession();
+      });
+      chip.appendChild(pin);
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "tab__close";
+      close.textContent = "✕";
+      close.title = "关闭标签页";
+      close.addEventListener("click", (event) => { event.stopPropagation(); void closeTabByState(tab.id); });
+      chip.appendChild(close);
+    }
     chip.addEventListener("click", () => void switchToTab(index));
     chip.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void switchToTab(index); } });
     tabbar.appendChild(chip);
   });
-  if (overflowFrom < tabs.length) {
+  if (overflowing) {
     const more = document.createElement("button");
     more.type = "button";
     more.className = "tabbar__overflow";
     more.textContent = `▾ 更多标签（${tabs.length}）`;
     more.addEventListener("click", () => {
-      // 中文：溢出菜单 = 依次列出被收纳的 Tab，点击即切换（原型稿 1 的「更多标签」行为）。
-      // English: The overflow menu lists collapsed tabs in order; clicking one switches to it.
+      // 中文：溢出菜单 = 依次列出被收纳的 Tab（折叠规则与渲染一致），点击即切换。
+      // English: The overflow menu lists collapsed tabs in order (the same collapse rule as the
+      //       rendering); clicking one switches to it.
       const menu = document.createElement("div");
       menu.className = "tab-overflow-menu";
       tabs.forEach((tab, index) => {
-        if (index >= overflowFrom && index !== activeIndex) {
+        if (isCollapsed(tab, index)) {
           const item = document.createElement("button");
           item.type = "button";
-          item.textContent = `${tab.document.dirty ? "● " : ""}${getDocumentLabel(tab.document.path)}`;
+          item.textContent = `${tab.document.dirty ? "● " : ""}${getTabDisplayText(tab)}`;
           item.addEventListener("click", () => { menu.remove(); void switchToTab(index); });
           menu.appendChild(item);
         }
@@ -992,6 +1141,9 @@ async function initializeEditor(): Promise<void> {
         refreshOutlineIfVisible();
         refreshSearchIfVisible();
         refreshSourceTextFromEditor();
+        // 中文：编辑即排草稿写盘（防抖 1s，F7 定案⑤）。
+        // English: Edits schedule a draft write (1s debounce, F7 decision ⑤).
+        scheduleDraftWrite();
         setStatus("已修改，尚未保存");
       });
     }
@@ -1090,6 +1242,10 @@ async function switchToTab(index: number): Promise<void> {
   // English: With the source view open, flush source edits first — the snapshot below reads the
   //       editor's content, which would be stale without the flush.
   await flushSourceEdits();
+  // 中文：切离前立即写一次出栈 Tab 的草稿——防抖未落的编辑不丢（F7）。
+  // English: Write the outgoing tab's draft immediately before switching away — debounced edits
+  //          are never lost (F7).
+  await flushDraftWrite();
   isReplacingContent = true;
   if (editor) {
     const content = readEditorContent();
@@ -1107,6 +1263,7 @@ async function switchToTab(index: number): Promise<void> {
   resetExplorerFor(state());
   await renderExplorerTree();
   setStatus("已切换标签页");
+  persistSession();
 }
 
 /**
@@ -1141,6 +1298,10 @@ async function closeTabByState(id: string): Promise<void> {
   // English: After the new active tab loads, force the source-textarea mirror (same rationale as
   //       in replaceDocument).
   refreshSourceTextFromEditor(true);
+  // 中文：关闭 Tab = 结构变化 + 其草稿作废（F5/F7）。
+  // English: Closing a tab changes structure and voids its draft (F5/F7).
+  discardDraftForTab(id);
+  persistSession();
   setStatus(tabs.length > 1 ? "已关闭标签页" : "已新建文档");
 }
 
@@ -1186,6 +1347,7 @@ async function openPayload(payload: DocumentPayload): Promise<void> {
   tabs = appended;
   await switchToTab(tabs.length - 1);
   if (!historyDisabled && payload.path) void invoke("recent_files_record", { path: payload.path }).catch(() => undefined);
+  persistSession();
   setStatus("已打开");
 }
 
@@ -1214,6 +1376,7 @@ async function createDocument(): Promise<void> {
   if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），请先关闭部分标签页。`); return; }
     tabs = appended;
     await switchToTab(tabs.length - 1);
+    persistSession();
     setStatus("已新建文档");
 }
 
@@ -1578,6 +1741,52 @@ async function toggleSettingsPanel(): Promise<void> {
   appearanceSection.append(appearanceTitle, appearanceRow);
   panel.appendChild(appearanceSection);
 
+  // 中文：数据与恢复区（W-hrt-P14 F5/F7）——会话恢复与自动保存草稿两个开关，并说明数据落点。
+  //       关闭会话恢复即清除存档；关闭自动保存即清空草稿（不留无人管理的明文副本）。
+  // English: The data-and-recovery section (W-hrt-P14 F5/F7) — session-restore and autosave-draft
+  //          switches plus where the data lives. Turning restore off clears the archive; turning
+  //          autosave off clears drafts (no unmanaged plaintext copies remain).
+  const dataSection = document.createElement("div");
+  dataSection.className = "settings-panel__section";
+  const dataTitle = document.createElement("div");
+  dataTitle.className = "settings-panel__title";
+  dataTitle.textContent = "数据与恢复";
+  const sessionLabel = document.createElement("label");
+  sessionLabel.className = "settings-panel__check";
+  const sessionCheckbox = document.createElement("input");
+  sessionCheckbox.type = "checkbox";
+  sessionCheckbox.id = "session-restore-toggle";
+  sessionCheckbox.checked = sessionRestoreEnabled;
+  sessionCheckbox.addEventListener("change", () => {
+    sessionRestoreEnabled = sessionCheckbox.checked;
+    localStorage.setItem(SESSION_RESTORE_KEY, sessionRestoreEnabled ? "1" : "0");
+    if (sessionRestoreEnabled) persistSession();
+    else if (isTauriRuntimeCheck()) void invoke("session_clear").catch(() => undefined);
+  });
+  sessionLabel.append(sessionCheckbox, document.createTextNode(" 会话恢复（重启后恢复上次的标签页）"));
+  const autosaveLabel = document.createElement("label");
+  autosaveLabel.className = "settings-panel__check";
+  const autosaveCheckbox = document.createElement("input");
+  autosaveCheckbox.type = "checkbox";
+  autosaveCheckbox.id = "autosave-toggle";
+  autosaveCheckbox.checked = autosaveEnabled;
+  autosaveCheckbox.addEventListener("change", () => {
+    autosaveEnabled = autosaveCheckbox.checked;
+    localStorage.setItem(AUTOSAVE_KEY, autosaveEnabled ? "1" : "0");
+    if (!autosaveEnabled && isTauriRuntimeCheck()) {
+      tabDraftIds.clear();
+      pendingDrafts = [];
+      renderDraftBanner();
+      void invoke("autosave_clear").catch(() => undefined);
+    }
+  });
+  autosaveLabel.append(autosaveCheckbox, document.createTextNode(" 自动保存草稿（崩溃后恢复未保存内容）"));
+  const dataNote = document.createElement("div");
+  dataNote.className = "settings-panel__note";
+  dataNote.textContent = "会话与草稿仅保存在本机（便携目录 data/ 优先；不可写时 %APPDATA%\\HIA-HugeRTE），不上传、不联网。";
+  dataSection.append(dataTitle, sessionLabel, autosaveLabel, dataNote);
+  panel.appendChild(dataSection);
+
   // 中文：版本区——当前版本 + 「打开下载页」（零网络：不在应用内请求远端）。
   // English: Version section — current version plus "open download page" (zero network: nothing is
   // requested from inside the app).
@@ -1743,6 +1952,11 @@ async function saveDocument(forceSaveAs: boolean): Promise<void> {
     }
     await applyDocumentToEditor(state());
     refreshDocumentHeader();
+    // 中文：保存成功 → 草稿作废（F7）；另存为可能改变路径 → 会话存档同步（F5）。
+    // English: A successful save voids the draft (F7); save-as may change the path, so the session
+    //          archive follows (F5).
+    discardDraftForTab(tabs[activeIndex].id);
+    persistSession();
     setStatus("已保存");
   } catch (error) { setStatus(`保存失败：${formatError(error)}`); }
 }
@@ -2928,6 +3142,270 @@ function syncScrollFromSourceToEditor(): void {
   window.setTimeout(() => { sourceScrollSyncLock = false; }, 30);
 }
 
+// ===== 会话恢复（W-hrt-P14 F5，稿 1 / 定案①②）与自动保存草稿（F7，稿 4 / 定案⑤⑥⑦） =====
+
+/** @lang zh-CN 「会话恢复」设置开关（默认开）。关闭即不写不读，并清除已有存档。 / @lang en The "session restore" setting (on by default). Turning it off stops writes and reads and clears the existing archive. */
+const SESSION_RESTORE_KEY = "hia-hugerte.session-restore";
+let sessionRestoreEnabled = localStorage.getItem(SESSION_RESTORE_KEY) !== "0";
+
+/** @lang zh-CN 「自动保存草稿」设置开关（默认开）。关闭即清空现有草稿。 / @lang en The "autosave drafts" setting (on by default). Turning it off clears existing drafts. */
+const AUTOSAVE_KEY = "hia-hugerte.autosave";
+let autosaveEnabled = localStorage.getItem(AUTOSAVE_KEY) !== "0";
+
+/** @lang zh-CN 草稿防抖计时器（定案⑤：编辑防抖 1s 写盘）。 / @lang en Draft debounce timer (decision ⑤: 1s debounce on edits). */
+const AUTOSAVE_DEBOUNCE_MS = 1000;
+let autosaveTimer: number | null = null;
+
+/** @lang zh-CN 以 Tab id 为键的草稿 id 映射（同一 Tab 的草稿跨保存持续复用，不重复占用配额）。 / @lang en Tab-id → draft-id mapping (one tab's draft keeps its id across writes, never consuming extra quota). */
+const tabDraftIds = new Map<string, string>();
+
+/** @lang zh-CN 启动时读到的未处理草稿（提示条数据源；恢复/丢弃后清空）。 / @lang en Drafts loaded at startup awaiting a decision (the banner's data source; cleared after restore/discard). */
+let pendingDrafts: DraftRecord[] = [];
+
+/**
+ * @lang zh-CN
+ * 写会话存档（F5）：把当前 Tab 组的有路径 Tab（含固定/别名）整份交给原生层原子写入。
+ * 触发时机 = Tab 结构变化（打开/关闭/切换/固定/改名/另存为）——崩溃安全；关闭设置项时
+ * 改为清除存档。失败静默（会话不是关键路径，与最近文件同策略）。
+ * @lang en
+ * Write the session archive (F5): hand every path-bearing tab (with pinned/alias) to the native
+ * layer for an atomic write. Triggered by tab-structure changes (open/close/switch/pin/rename/
+ * save-as) — crash-safe; with the setting off, the archive is cleared instead. Failures stay
+ * silent (the session is not a critical path, the same policy as recent files).
+ */
+function persistSession(): void {
+  if (!isTauriRuntimeCheck()) return;
+  if (!sessionRestoreEnabled) {
+    void invoke("session_clear").catch(() => undefined);
+    return;
+  }
+  const record = buildSessionRecord(tabs, activeIndex);
+  // 中文：存档路径去掉 `\\?\` 前缀再写盘——会话文件是用户可见的本地数据，保持常规形态；
+  //       恢复时同样归一化（见 restoreSession）。
+  // English: Strip the `\\?\` prefix before writing — the session file is user-visible local data
+  //       and keeps the ordinary shape; restore normalizes as well (see restoreSession).
+  const portableTabs = record.tabs.map((tab) => ({ ...tab, path: normalizeWindowsPath(tab.path) }));
+  // 中文：空记录时原生层会删除存档（无文件 Tab 即无需恢复）。
+  // English: With an empty record the native layer removes the archive (no file tabs → nothing to
+  //          restore).
+  void invoke("session_save", { tabs: portableTabs, activeIndex: record.activeIndex }).catch(() => undefined);
+}
+
+/**
+ * @lang zh-CN
+ * 恢复会话（F5，定案①：启动参数优先——调用方只在无启动参数时调用）：读存档 → 规整 →
+ * 逐个按路径打开（失效文件跳过并计数）→ 恢复固定/别名 → 切到存档中的活动 Tab。
+ * 返回是否有任何 Tab 被恢复（调用方据此决定是否继续草稿提示）。
+ * @lang en
+ * Restore the session (F5, decision ①: startup arguments win — the caller only invokes this when
+ * none were supplied): load → normalize → open each path (missing files skip and count) → restore
+ * pinned/alias → switch to the archived active tab. Returns whether any tab was restored (the
+ * caller uses that to decide about the draft banner).
+ */
+async function restoreSession(): Promise<boolean> {
+  if (!sessionRestoreEnabled) return false;
+  let raw: unknown = null;
+  try { raw = await invoke<unknown>("session_load"); } catch { raw = null; }
+  const record: SessionRecord | null = normalizeSessionRecord(raw);
+  if (!record) return false;
+  let nextTabs = tabs;
+  /** @lang zh-CN 存档 Tab 在 nextTabs 中的最终下标（按成功打开顺序；失效文件不入列）。 / @lang en Final indexes of archived tabs within nextTabs (in successful-open order; missing files stay out). */
+  const restoredIndexes: number[] = [];
+  let skipped = 0;
+  for (const entry of record.tabs) {
+    try {
+      // 中文：存档路径可能带 canonicalize 的 `\\?\` 前缀（打开时由原生层返回）——交给
+      //       open_document_path 前先归一化为常规 `C:\...` 形式，避免存档把内部形态外泄到
+      //       历史记录与界面。
+      // English: Archived paths may carry canonicalize's `\\?\` prefix (returned by the native
+      //       layer on open) — normalize to the ordinary `C:\...` form before handing it to
+      //       open_document_path, so the internal shape never leaks into history or the UI.
+      const payload = await invoke<DocumentPayload>("open_document_path", { path: normalizeWindowsPath(entry.path) });
+      const appended = appendDocumentTab(nextTabs, documentFromPayload(payload));
+      if (!appended) { skipped += 1; continue; }
+      nextTabs = appended;
+      restoredIndexes.push(nextTabs.length - 1);
+    } catch {
+      // 中文：失效路径（已删除/无权限）逐个跳过——恢复不是关键路径，绝不阻断启动。
+      // English: Missing paths (deleted/no permission) skip individually — restoring is not a
+      //          critical path and must never block startup.
+      skipped += 1;
+    }
+  }
+  if (restoredIndexes.length === 0) return false;
+  // 中文：固定/别名按存档顺序回填到对应新 Tab 上。
+  // English: Pinned/alias fill back onto the matching new tabs in archive order.
+  const successful = record.tabs.filter((_, index) => index < restoredIndexes.length);
+  restoredIndexes.forEach((tabIndex, order) => {
+    const entry = successful[order];
+    if (!entry) return;
+    const tabId = nextTabs[tabIndex].id;
+    if (entry.pinned) nextTabs = setTabPinned(nextTabs, tabId, true);
+    if (entry.alias) nextTabs = setTabAlias(nextTabs, tabId, entry.alias);
+  });
+  // 中文：起始的「未命名文档」Tab 从未被使用过才移除（用户已在启动前编辑过则保留其内容）。
+  // English: Drop the initial untitled tab only when it was never touched (if the user edited
+  //          before startup finished, its content stays).
+  if (!tabs[0].document.dirty && tabs[0].document.path === null) {
+    nextTabs = nextTabs.filter((_, index) => index !== 0);
+  }
+  tabs = nextTabs;
+  const activeTarget = restoredIndexes[Math.min(record.activeIndex, restoredIndexes.length - 1)];
+  await switchToTab(activeTarget);
+  setStatus(skipped > 0 ? `已恢复 ${restoredIndexes.length} 个文档；${skipped} 个已失效被跳过` : `已恢复 ${restoredIndexes.length} 个文档`);
+  return true;
+}
+
+/**
+ * @lang zh-CN
+ * 写活动 Tab 的草稿（F7）：未保存的文档才写（干净文档已有磁盘副本）；草稿 id 按 Tab 复用；
+ * 首次写入时按现有草稿清单分配新 id。失败静默。
+ * @lang en
+ * Write the active tab's draft (F7): only unsaved documents write (clean documents already have a
+ * disk copy); the draft id is reused per tab, and the first write allocates one via the existing
+ * draft list. Failures stay silent.
+ */
+async function writeActiveDraft(): Promise<void> {
+  if (!isTauriRuntimeCheck() || !autosaveEnabled) return;
+  const tab = tabs[activeIndex];
+  if (!tab || !tab.document.dirty) {
+    // 中文：干净文档不必再保草稿——若此前存过则删除（避免恢复出已被保存的旧内容）。
+    // English: A clean document needs no draft — delete any earlier one (so a restore never
+    //          resurrects content that has since been saved).
+    const staleId = tabDraftIds.get(tab?.id ?? "");
+    if (staleId) {
+      tabDraftIds.delete(tab!.id);
+      void invoke("autosave_delete", { id: staleId }).catch(() => undefined);
+    }
+    return;
+  }
+  let draftId = tabDraftIds.get(tab.id);
+  if (!draftId) {
+    let existing: DraftRecord[] = [];
+    try { existing = await invoke<DraftRecord[]>("autosave_list"); } catch { existing = []; }
+    draftId = nextDraftId(existing);
+    tabDraftIds.set(tab.id, draftId);
+  }
+  const origin = tab.document.path;
+  void invoke("autosave_write", { id: draftId, origin, title: draftTitle(origin), content: tab.document.content }).catch(() => undefined);
+}
+
+/** @lang zh-CN 草稿写盘防抖（定案⑤）：编辑事件与 Tab 切离都走此入口，1s 内合并。 / @lang en Draft debounce (decision ⑤): edit events and tab switch-away share this entry, coalescing within 1s. */
+function scheduleDraftWrite(): void {
+  if (autosaveTimer !== null) window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => {
+    autosaveTimer = null;
+    void writeActiveDraft();
+  }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+/** @lang zh-CN 立即写草稿（Tab 切离/关闭/退出前；一并清除计时器）。 / @lang en Write the draft immediately (before tab switch-away/close/exit; clears the timer). */
+async function flushDraftWrite(): Promise<void> {
+  if (autosaveTimer !== null) {
+    window.clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+  await writeActiveDraft();
+}
+
+/** @lang zh-CN 删除某 Tab 的草稿（保存成功/Tab 关闭时）。 / @lang en Delete a tab's draft (after a successful save / when the tab closes). */
+function discardDraftForTab(tabId: string): void {
+  const draftId = tabDraftIds.get(tabId);
+  if (!draftId) return;
+  tabDraftIds.delete(tabId);
+  if (isTauriRuntimeCheck()) void invoke("autosave_delete", { id: draftId }).catch(() => undefined);
+}
+
+/**
+ * @lang zh-CN
+ * 渲染草稿提示条（F7 稿 4，定案⑥）：有未处理草稿才显示，文案说明份数与来源（有来源的文件名
+ * / 未命中文档），并提供「恢复为 Tab」「全部丢弃」。「丢弃」经确认模态（不可逆）。
+ * @lang en
+ * Render the draft banner (F7 draft 4, decision ⑥): visible only with pending drafts; the copy
+ * names the count and origins (file names / untitled documents) and offers "restore as tabs" and
+ * "discard all". Discarding goes through the confirm modal (irreversible).
+ */
+function renderDraftBanner(): void {
+  if (pendingDrafts.length === 0) {
+    draftBanner.hidden = true;
+    return;
+  }
+  const named = pendingDrafts.filter((draft) => draft.origin !== null).map((draft) => draftTitle(draft.origin));
+  const untitledCount = pendingDrafts.length - named.length;
+  const parts: string[] = [];
+  if (named.length > 0) parts.push(named.slice(0, 3).join("、") + (named.length > 3 ? " 等" : ""));
+  if (untitledCount > 0) parts.push(`${untitledCount} 份未命名文档`);
+  draftBannerText.textContent = `检测到 ${pendingDrafts.length} 份上次会话的未保存草稿（${parts.join("，")}）`;
+  draftBanner.hidden = false;
+}
+
+/**
+ * @lang zh-CN
+ * 恢复草稿为脏 Tab（F7 定案⑥）：有来源路径且该文件已作为 Tab 打开 → 用草稿内容覆盖该 Tab 并
+ * 置脏；否则新开一个脏 Tab（来源路径的 Tab 不存在时也走这里，内容可靠且不丢）。恢复后清空
+ * 清单并结束提示。**永不静默覆盖已打开文件的磁盘内容**——只在内存里标记未保存。
+ * @lang en
+ * Restore drafts as dirty tabs (F7 decision ⑥): when an origin file is already open as a tab, the
+ * draft content overwrites that tab in memory and marks it dirty; otherwise a new dirty tab opens
+ * (an origin whose tab is absent takes this path — content is reliable and never lost). The list
+ * clears and the banner ends. **The on-disk file is never silently overwritten** — only the
+ * in-memory tab becomes unsaved.
+ */
+async function restoreDrafts(): Promise<void> {
+  const drafts = pendingDrafts;
+  pendingDrafts = [];
+  renderDraftBanner();
+  for (const draft of drafts) {
+    const content = draft.content ?? "";
+    if (content.length === 0) continue;
+    const existingIndex = draft.origin
+      ? tabs.findIndex((tab) => tab.document.path !== null && tab.document.path === draft.origin)
+      : -1;
+    if (existingIndex >= 0) {
+      // 中文：先切到该 Tab（switchToTab 会 flush 当前内容），再换内容并置脏。
+      // English: Switch to that tab first (switchToTab flushes the current content), then swap in
+      //          the draft and mark it dirty.
+      await switchToTab(existingIndex);
+      tabs = tabs.map((tab, index) => (index === existingIndex
+        ? { ...tab, document: { ...tab.document, content, dirty: true } }
+        : tab));
+      await applyDocumentToEditor(state());
+      refreshDocumentHeader();
+      continue;
+    }
+    const appended = appendDocumentTab(tabs, { ...state(), content, path: draft.origin, dirty: true, baseDir: state().baseDir });
+    if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），部分草稿未恢复。`); break; }
+    tabs = appended;
+    await switchToTab(tabs.length - 1);
+    // 中文：恢复出的 Tab 保留草稿 id——后续编辑继续写回同一草稿，不必重新分配。
+    // English: The restored tab keeps the draft id so further edits write to the same draft
+    //          instead of allocating a new one.
+    tabDraftIds.set(tabs[tabs.length - 1].id, draft.id);
+  }
+  if (isTauriRuntimeCheck()) void invoke("autosave_clear").catch(() => undefined);
+  setStatus("已恢复未保存草稿");
+}
+
+/** @lang zh-CN 丢弃全部草稿（经确认模态，不可逆）。 / @lang en Discard every draft (through the confirm modal; irreversible). */
+async function discardDrafts(): Promise<void> {
+  if (!(await showConfirmModal(`将丢弃 ${pendingDrafts.length} 份上次会话的未保存草稿，且无法撤销。确定丢弃？`))) return;
+  pendingDrafts = [];
+  renderDraftBanner();
+  if (isTauriRuntimeCheck()) void invoke("autosave_clear").catch(() => undefined);
+  setStatus("已丢弃未保存草稿");
+}
+
+/** @lang zh-CN 启动时加载待处理草稿并渲染提示条（F7 定案⑥）。 / @lang en Load pending drafts at startup and render the banner (F7 decision ⑥). */
+async function loadPendingDrafts(): Promise<void> {
+  if (!sessionRestoreEnabled && !autosaveEnabled) return;
+  if (!isTauriRuntimeCheck()) return;
+  try { pendingDrafts = await invoke<DraftRecord[]>("autosave_list"); } catch { pendingDrafts = []; }
+  // 中文：已有同路径 Tab 时草稿仍提示（恢复会覆盖内存内容并置脏，磁盘不动）——保持显式。
+  // English: Drafts always prompt even when the same path is already open (restoring overwrites
+  //          the in-memory content and marks it dirty; the disk stays untouched) — keep it explicit.
+  renderDraftBanner();
+}
+
 /**
  * @lang zh-CN
  * 启动参数多文件（ADR-0005 第 3 条）：全部开为 Tab（首个活动），解除初版"仅开第一个"限制；
@@ -2935,11 +3413,14 @@ function syncScrollFromSourceToEditor(): void {
  * @lang en
  * Startup multi-file (ADR-0005 §3): every file opens as a tab (first active), lifting the
  * initial "first file only" limit; remaining files get a notice when the cap is hit.
+ * 返回是否有启动参数文件被处理（W-hrt-P14 F5 定案①：启动参数优先于会话恢复）。
+ * Returns whether any startup-argument file was handled (W-hrt-P14 F5 decision ①: startup
+ * arguments win over session restore).
  */
-async function openStartupDocuments(): Promise<void> {
+async function openStartupDocuments(): Promise<boolean> {
   try {
     const documents = await invoke<DocumentPayload[]>("get_startup_documents");
-    if (documents.length === 0) return;
+    if (documents.length === 0) return false;
     if (editor) {
       const content = readEditorContent();
       replaceActiveDocument({ ...state(), content });
@@ -2960,7 +3441,8 @@ async function openStartupDocuments(): Promise<void> {
     tabs = nextTabs;
     await switchToTab(1 >= tabs.length ? 0 : 1);
     setStatus(skipped > 0 ? `已打开 ${documents.length - skipped} 个传入文件；${skipped} 个因标签页上限被跳过` : documents.length > 1 ? `已通过系统文件入口打开 ${documents.length} 个文件` : "已通过系统文件入口打开");
-  } catch (error) { setStatus(`启动文件打开失败：${formatError(error)}`); }
+    return true;
+  } catch (error) { setStatus(`启动文件打开失败：${formatError(error)}`); return false; }
 }
 
 // 中文：应用级菜单栏与工具栏（`W-hrt-P12` 定案方案二）——顶部结构为 Banner / 菜单栏 / 工具栏 / Tab 条。
@@ -3038,8 +3520,26 @@ sourceResizer.addEventListener("keydown", (event) => {
   applySourceViewLayout();
   localStorage.setItem(SOURCE_WIDTH_KEY, String(sourceWidth));
 });
-sourceWidth = clampSourceWidth(sourceWidth);
-applySourceViewLayout();
+  sourceWidth = clampSourceWidth(sourceWidth);
+  applySourceViewLayout();
+// 中文：F5/F7 接线（W-hrt-P14）——启动流程见文件末的 initializeEditor 链；此处绑定提示条按钮
+//       与「页面卸载前」的草稿兜底（WebView 关闭时最后一秒的编辑也不丢）。
+// English: F5/F7 wiring (W-hrt-P14) — the startup chain lives at the file's end; here we bind the
+//       banner buttons plus a page-unload draft fallback (edits in the final second survive a
+//       WebView close).
+draftRestoreButton.addEventListener("click", () => void restoreDrafts());
+draftDiscardButton.addEventListener("click", () => void discardDrafts());
+window.addEventListener("beforeunload", () => {
+  // 中文：同步路径——卸载中无法 await；把当前脏 Tab 的草稿直接交给原生层（尽力而为）。
+  // English: Synchronous path — unloading cannot await; hand the dirty tab's draft to the native
+  //          layer directly (best effort).
+  if (!isTauriRuntimeCheck() || !autosaveEnabled) return;
+  const tab = tabs[activeIndex];
+  if (!tab?.document.dirty) return;
+  const draftId = tabDraftIds.get(tab.id);
+  if (!draftId) return;
+  void invoke("autosave_write", { id: draftId, origin: tab.document.path, title: draftTitle(tab.document.path), content: tab.document.content }).catch(() => undefined);
+});
 explorerUpButton.addEventListener("click", () => {
   const parent = parentPath(explorerRootPath);
   if (parent) void setExplorerRoot(parent);
@@ -3152,5 +3652,17 @@ if (isTauriRuntime) {
 }
 
 void initializeEditor()
-  .then(() => isTauriRuntime ? openStartupDocuments() : setStatus("浏览器兼容性验证模式"))
+  .then(async () => {
+    if (!isTauriRuntime) { setStatus("浏览器兼容性验证模式"); return; }
+    // 中文：启动顺序（W-hrt-P14 F5 定案①）——启动参数优先；无启动参数才恢复会话；最后提示草稿。
+    // English: Startup order (W-hrt-P14 F5 decision ①) — startup arguments win; the session is
+    //       restored only when none were supplied; drafts prompt last.
+    const startupHandled = await openStartupDocuments();
+    if (!startupHandled) await restoreSession();
+    await loadPendingDrafts();
+    // 中文：会话首写（结构变化即写的第一个落点——启动稳定后的当前形态）。
+    // English: The first session write (the first landing point of "write on structure change" —
+    //          the settled shape right after startup).
+    persistSession();
+  })
   .catch((error: unknown) => setStatus(`编辑器初始化失败：${formatError(error)}`));

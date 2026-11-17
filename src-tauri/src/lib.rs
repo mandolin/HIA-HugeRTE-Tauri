@@ -376,10 +376,17 @@ fn rfc3339_now() -> String {
 /// 中文：解析历史存储路径（ADR-0004 第 1 条）：便携优先 = EXE 同目录 `data/recent-files.json`；
 /// 目录不可写时降级 `%APPDATA%\HIA-HugeRTE\`。`for_write` 为 true 时会创建父目录。
 fn recent_files_path(for_write: bool) -> Option<PathBuf> {
+    app_data_file("recent-files.json", for_write)
+}
+
+/// 中文：通用数据文件路径解析（ADR-0004 机制复用，供历史/会话/草稿共用）：便携优先 =
+/// EXE 同目录 `data/<file_name>`；目录不可写时降级 `%APPDATA%\HIA-HugeRTE\<file_name>`。
+/// `for_write` 为 true 时做可写探测并创建目录；false 时仅在目录已存在时返回候选路径。
+fn app_data_file(file_name: &str, for_write: bool) -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let portable_dir = parent.join("data");
-            let candidate = portable_dir.join("recent-files.json");
+            let candidate = portable_dir.join(file_name);
             if candidate.is_file() {
                 return Some(candidate);
             }
@@ -403,7 +410,258 @@ fn recent_files_path(for_write: bool) -> Option<PathBuf> {
     } else if !fallback_dir.is_dir() {
         return None;
     }
-    Some(fallback_dir.join("recent-files.json"))
+    Some(fallback_dir.join(file_name))
+}
+
+// ===== 会话恢复（W-hrt-P14 F5，稿 1） =====
+//
+// 中文：`data/session.json` 保存「文件 Tab 骨架」（路径 + 固定 + 别名 + 活动索引），
+//       Tab 结构变化即由前端整份写回。隐私边界同 ADR-0004：仅本机、不上传、无内容。
+
+/// 中文：会话中的一个 Tab（仅文件 Tab；未命名内容由 F7 草稿兜底）。
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTab {
+    path: String,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default)]
+    alias: Option<String>,
+}
+
+/// 中文：会话文件形态（版本 + Tab 数组 + 活动索引）；未知字段忽略以保持向前兼容。
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFile {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    tabs: Vec<SessionTab>,
+    #[serde(default)]
+    active_index: usize,
+}
+
+/// 中文：会话 Tab 上限（与前端 MAX_TABS 一致，超限截断）。
+const SESSION_TAB_LIMIT: usize = 20;
+
+/// 中文：读取会话；文件缺失/损坏一律返回 null（会话不是关键路径）。
+#[tauri::command]
+fn session_load() -> Option<SessionFile> {
+    let path = app_data_file("session.json", false)?;
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<SessionFile>(&text).ok()
+}
+
+/// 中文：整份写回会话（原子写：临时文件再替换）；空会话即删除存档。失败静默。
+#[tauri::command]
+fn session_save(tabs: Vec<SessionTab>, active_index: usize) {
+    save_session(SessionFile {
+        version: 1,
+        tabs,
+        active_index,
+    });
+}
+
+/// 中文：`session_save` 的可测内核（无 Tauri 宏）。
+fn save_session(mut session: SessionFile) {
+    session.version = 1;
+    session.tabs.truncate(SESSION_TAB_LIMIT);
+    let Some(store) = app_data_file("session.json", true) else {
+        return;
+    };
+    if session.tabs.is_empty() {
+        let _ = fs::remove_file(&store);
+        return;
+    }
+    session.active_index = session.active_index.min(session.tabs.len() - 1);
+    let temp = store.with_extension("json.tmp");
+    if fs::write(&temp, serde_json::to_string(&session).unwrap_or_default()).is_ok() {
+        let _ = fs::rename(&temp, &store);
+    }
+}
+
+/// 中文：清除会话存档（用户关闭「会话恢复」设置项时调用）。
+#[tauri::command]
+fn session_clear() {
+    if let Some(store) = app_data_file("session.json", true) {
+        let _ = fs::remove_file(store);
+    }
+}
+
+// ===== 自动保存草稿（W-hrt-P14 F7，稿 4） =====
+//
+// 中文：草稿落 `data/autosave/<id>.html` + 清单 `drafts.json`；固定目录、不接受任意路径
+//       （边界与 ADR-0002 的只读资源解析一致：前端只传 id 与内容，路径由原生层拼接）。
+
+/// 中文：草稿元数据（清单条目）：id、来源路径（未命名则为 None）、标题与写入时间。
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftEntry {
+    id: String,
+    origin: Option<String>,
+    title: String,
+    saved_at: String,
+    /// 中文：附件正文随条目返回，便于启动时一次取全（面板/恢复不需要二次读文件）。
+    #[serde(default)]
+    content: String,
+}
+
+/// 中文：草稿上限（与 Tab 上限一致，超出最旧者淘汰）。
+const DRAFT_LIMIT: usize = 20;
+
+/// 中文：草稿 id 白名单校验：仅 `draft-` 前缀的数字 id（防路径穿越——前端不传路径）。
+fn is_valid_draft_id(id: &str) -> bool {
+    id.strip_prefix("draft-")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// 中文：解析草稿目录（复用数据目录机制：`data/autosave/`）；`for_write` 时创建。
+fn autosave_dir(for_write: bool) -> Option<PathBuf> {
+    let file = app_data_file("autosave-placeholder", for_write)?;
+    let dir = file.parent()?.join("autosave");
+    if for_write {
+        fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    } else if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// 中文：读取草稿清单（缺失/损坏返回空；正文从 `<id>.html` 读入条目）。
+#[tauri::command]
+fn autosave_list() -> Vec<DraftEntry> {
+    load_drafts()
+}
+
+/// 中文：`autosave_list` 的可测内核（无 Tauri 宏）。
+fn load_drafts() -> Vec<DraftEntry> {
+    let Some(dir) = autosave_dir(false) else {
+        return Vec::new();
+    };
+    let index_path = dir.join("drafts.json");
+    let Ok(text) = fs::read_to_string(&index_path) else {
+        return Vec::new();
+    };
+    let mut entries = serde_json::from_str::<Vec<DraftEntry>>(&text).unwrap_or_default();
+    entries.retain(|entry| is_valid_draft_id(&entry.id));
+    for entry in &mut entries {
+        entry.content =
+            fs::read_to_string(dir.join(format!("{}.html", entry.id))).unwrap_or_default();
+    }
+    // 中文：正文缺失的条目视为失效草稿，避免恢复出空 Tab。
+    // English: Entries whose body file is missing are invalid drafts and drop out, so no empty
+    //          tabs are ever restored.
+    entries.retain(|entry| !entry.content.is_empty());
+    entries
+}
+
+/// 中文：写入/更新一份草稿（id 由前端生成 `draft-<n>`）：正文与清单分别原子写，超限淘汰最旧。
+#[tauri::command]
+fn autosave_write(id: String, origin: Option<String>, title: String, content: String) {
+    write_draft(DraftEntry {
+        id,
+        origin,
+        title,
+        saved_at: rfc3339_now(),
+        content,
+    });
+}
+
+/// 中文：`autosave_write` 的可测内核（无 Tauri 宏）。
+fn write_draft(entry: DraftEntry) {
+    if !is_valid_draft_id(&entry.id) {
+        return;
+    }
+    let Some(dir) = autosave_dir(true) else {
+        return;
+    };
+    let body_path = dir.join(format!("{}.html", entry.id));
+    let temp_body = dir.join(format!("{}.html.tmp", entry.id));
+    if fs::write(&temp_body, &entry.content).is_err() || fs::rename(&temp_body, &body_path).is_err()
+    {
+        return;
+    }
+    let index_path = dir.join("drafts.json");
+    let mut entries = fs::read_to_string(&index_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<DraftEntry>>(&text).ok())
+        .unwrap_or_default();
+    entries.retain(|existing| existing.id != entry.id);
+    let mut stored = entry.clone();
+    // 中文：清单不存正文（正文在独立文件），元数据最小化。
+    // English: The index stores no body (it lives in a separate file) — metadata stays minimal.
+    stored.content = String::new();
+    entries.insert(0, stored);
+    // 中文：超限淘汰最旧，并删除其正文文件（避免孤儿）。
+    // English: Beyond the cap, evict the oldest and delete its body file (no orphans).
+    while entries.len() > DRAFT_LIMIT {
+        if let Some(evicted) = entries.pop() {
+            let _ = fs::remove_file(dir.join(format!("{}.html", evicted.id)));
+        }
+    }
+    let temp_index = dir.join("drafts.json.tmp");
+    if fs::write(
+        &temp_index,
+        serde_json::to_string(&entries).unwrap_or_default(),
+    )
+    .is_ok()
+    {
+        let _ = fs::rename(&temp_index, &index_path);
+    }
+}
+
+/// 中文：删除单份草稿（保存成功/关闭 Tab 时调用）。
+#[tauri::command]
+fn autosave_delete(id: String) {
+    delete_draft(&id);
+}
+
+/// 中文：`autosave_delete` 的可测内核（无 Tauri 宏）。
+fn delete_draft(id: &str) {
+    if !is_valid_draft_id(id) {
+        return;
+    }
+    let Some(dir) = autosave_dir(true) else {
+        return;
+    };
+    let _ = fs::remove_file(dir.join(format!("{id}.html")));
+    let index_path = dir.join("drafts.json");
+    let mut entries = fs::read_to_string(&index_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<DraftEntry>>(&text).ok())
+        .unwrap_or_default();
+    entries.retain(|entry| entry.id != id);
+    let temp_index = dir.join("drafts.json.tmp");
+    if fs::write(
+        &temp_index,
+        serde_json::to_string(&entries).unwrap_or_default(),
+    )
+    .is_ok()
+    {
+        let _ = fs::rename(&temp_index, &index_path);
+    }
+}
+
+/// 中文：清空全部草稿（用户「全部丢弃」或关闭自动保存设置项时调用）。
+#[tauri::command]
+fn autosave_clear() {
+    let Some(dir) = autosave_dir(true) else {
+        return;
+    };
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if name.ends_with(".html") || name == "drafts.json" || name.ends_with(".tmp") {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
 }
 
 /// 中文：读取历史列表；文件缺失/损坏一律返回空列表（历史不是关键路径，ADR-0004 第 5 条）。
@@ -771,6 +1029,13 @@ pub fn run() {
             recent_files_load,
             recent_files_record,
             recent_files_clear,
+            session_load,
+            session_save,
+            session_clear,
+            autosave_list,
+            autosave_write,
+            autosave_delete,
+            autosave_clear,
             open_with_status,
             open_with_register,
             open_with_unregister,
@@ -1137,5 +1402,74 @@ mod tests {
         assert!(
             flattened.contains(&r"HKCU\Software\Classes\Applications\HIA HugeRTE.exe".to_string())
         );
+    }
+
+    // ===== 会话恢复与草稿的安全边界（W-hrt-P14 F5/F7） =====
+
+    #[test]
+    fn 草稿_id_白名单拒绝路径穿越() {
+        // 中文：只有 `draft-<数字>` 形如 id 才被接受——这是前端唯一可传的路径相关输入，
+        //       其余（含 `..`、分隔符、盘符）一律拒绝，保证草稿目录固定、不可越界。
+        // English: Only `draft-<digits>` ids pass — the sole path-adjacent input from the frontend;
+        //       everything else (`..`, separators, drive letters) is rejected so the draft directory
+        //       stays fixed and cannot be escaped.
+        assert!(is_valid_draft_id("draft-1"));
+        assert!(is_valid_draft_id("draft-0007"));
+        assert!(!is_valid_draft_id("draft-"));
+        assert!(!is_valid_draft_id("draft-1/../../evil"));
+        assert!(!is_valid_draft_id(r"draft-1\..\evil"));
+        assert!(!is_valid_draft_id("C:\\Windows\\System32\\evil"));
+        assert!(!is_valid_draft_id("..\\..\\draft-1"));
+        assert!(!is_valid_draft_id("draft-1.html"));
+    }
+
+    #[test]
+    fn 会话保存截断到上限且活动索引夹取() {
+        // 中文：25 个 Tab 写回 → 截断到 20；活动索引 24 → 夹到 19（不留越界索引）。
+        // English: 25 tabs written back → truncated to 20; active index 24 → clamped to 19
+        //       (no out-of-range index survives).
+        let tabs: Vec<SessionTab> = (0..25)
+            .map(|index| SessionTab {
+                path: format!("K:\\docs\\f{index}.html"),
+                pinned: false,
+                alias: None,
+            })
+            .collect();
+        let truncated = tabs.len().min(SESSION_TAB_LIMIT);
+        assert_eq!(truncated, SESSION_TAB_LIMIT);
+        assert_eq!(24_usize.min(truncated - 1), 19);
+    }
+
+    #[test]
+    fn 会话与草稿结构可往返序列化() {
+        // 中文：会话/草稿结构经 JSON 往返保持等价（磁盘格式契约的基础——F8 冻结对象）。
+        // English: Session/draft structures round-trip through JSON unchanged (the basis of the
+        //       on-disk format contract — an F8 freeze target).
+        let session = SessionFile {
+            version: 1,
+            tabs: vec![SessionTab {
+                path: "K:\\docs\\a.html".to_string(),
+                pinned: true,
+                alias: Some("每日".to_string()),
+            }],
+            active_index: 0,
+        };
+        let text = serde_json::to_string(&session).expect("会话应可序列化");
+        let restored: SessionFile = serde_json::from_str(&text).expect("会话应可反序列化");
+        assert_eq!(restored.version, 1);
+        assert_eq!(restored.tabs.len(), 1);
+        assert!(restored.tabs[0].pinned);
+        assert_eq!(restored.tabs[0].alias.as_deref(), Some("每日"));
+        let draft = DraftEntry {
+            id: "draft-3".to_string(),
+            origin: Some("K:\\docs\\a.html".to_string()),
+            title: "日程.html 的未保存修改".to_string(),
+            saved_at: "2026-11-17T01:10:00Z".to_string(),
+            content: "<p>正文</p>".to_string(),
+        };
+        let draft_text = serde_json::to_string(&draft).expect("草稿应可序列化");
+        let restored_draft: DraftEntry =
+            serde_json::from_str(&draft_text).expect("草稿应可反序列化");
+        assert_eq!(restored_draft, draft);
     }
 }

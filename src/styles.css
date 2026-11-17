@@ -326,6 +326,24 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 .statusbar__save--dirty { color: #b23a54; font-weight: 600; }
 .statusbar__item--end { margin-left: auto; color: #7d939f; }
 
+/* 中文：草稿恢复提示条（W-hrt-P14 F7 稿 4，定案⑥）——非模态、可忽略；位于编辑区上方的
+   一条浅黄提示，两个动作按钮（恢复为主、丢弃为安静按钮）。
+   English: The draft-recovery banner (W-hrt-P14 F7 draft 4, decision ⑥) — non-modal and safe to
+   ignore; a light-amber strip above the editor area with two actions (restore primary, discard
+   quiet). */
+.draft-banner { display: flex; align-items: center; gap: .55rem; margin: 0 .75rem .35rem; padding: .4rem .6rem; border: 1px solid #e5c46a; border-radius: .4rem; background: #fff8e6; color: #6b4a00; font-size: .78rem; }
+.draft-banner[hidden] { display: none; }
+.draft-banner__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-banner__primary { flex: none; font: inherit; font-size: .76rem; padding: .2rem .6rem; border: 1px solid #8cc2cf; border-radius: .3rem; background: #fff; color: #034661; font-weight: 600; cursor: pointer; }
+.draft-banner__primary:hover, .draft-banner__primary:focus-visible { background: #e1fdf9; }
+.draft-banner__quiet { flex: none; margin-left: auto; font: inherit; font-size: .76rem; padding: .2rem .55rem; border: 1px solid #d4dde1; border-radius: .3rem; background: #fff; color: #425466; cursor: pointer; }
+.draft-banner__quiet:hover { background: #eef3f5; }
+
+/* 中文：设置面板的复选框行（W-hrt-P14 F5/F7「数据与恢复」区）。 */
+/* English: Checkbox rows in the settings panel (the W-hrt-P14 F5/F7 data-and-recovery area). */
+.settings-panel__check { display: flex; align-items: center; gap: .35rem; font-size: .76rem; color: #425466; cursor: pointer; }
+.settings-panel__check input { accent-color: #034661; margin: 0; }
+
 /* 中文：放弃修改确认模态（原型 v1，work-zone/dev/research/prototypes/hrt-confirm-modal-2026-11-10）。
    遮罩覆盖整个应用外壳，卡片居中；默认焦点在「取消」，确认按钮用警示色并带可见焦点环。 */
 /* English: Discard-changes confirm modal (prototype v1, work-zone/dev/research/prototypes/
@@ -363,8 +381,25 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 .tab:focus-visible { outline: 2px solid #034661; outline-offset: -2px; }
 .tab__dirty { color: #b23a54; font-weight: 700; }
 .tab__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab__name-orig { color: #98a8b1; font-size: .74rem; font-weight: 400; }
 .tab__close { color: #7d939f; border: none; background: transparent; cursor: pointer; font-size: .8rem; padding: 0 .1rem; }
 .tab__close:hover, .tab__close:focus-visible { color: #b23a54; }
+/* 中文：Tab 固定（W-hrt-P14 F6 稿 2）——悬停态 📌 小按钮浮于 chip 右上角；固定 Tab 收窄为
+   「📌 + 首字符」窄条（不渲染 ✕，防误关），📌 点击解除固定（单一入口）。
+   English: Tab pinning (W-hrt-P14 F6 draft 2) — a 📌 mini-button floats over the chip's top-right
+   corner on hover; a pinned tab narrows to a "📌 + first character" chip (no ✕, so accidental
+   closes are impossible) and clicking 📌 unpins (the single entry). */
+.tab__pin { border: none; background: transparent; color: #7d939f; cursor: pointer; font-size: .72rem; padding: 0; line-height: 1; }
+.tab__pin:hover, .tab__pin:focus-visible { color: #034661; }
+.tab__pin--hover { position: absolute; top: -.15rem; right: -.15rem; width: 1.05rem; height: 1.05rem; display: none; place-items: center; border-radius: .22rem; background: #034661; color: #fff; font-size: .58rem; }
+.tab:hover .tab__pin--hover, .tab:focus-within .tab__pin--hover { display: grid; }
+.tab--pinned { max-width: 3.2rem; padding: .4rem .45rem; gap: .3rem; }
+.tab--pinned .tab__name { font-weight: 600; }
+/* 中文：Tab 别名内联编辑输入框（稿 3）——宽度贴合 chip、聚焦描边，不撑破 Tab 条。
+   English: The tab-alias inline input (draft 3) — chip-fitting width with a focus outline that
+   never overflows the strip. */
+.tab__edit { width: 7rem; max-width: 11rem; padding: 0 .2rem; border: 1px solid #034661; border-radius: .2rem; background: #fff; color: #15202b; font: inherit; font-size: .8rem; }
+.tab__edit:focus-visible { outline: 2px solid #034661; outline-offset: -2px; }
 .tabbar__overflow { margin-left: auto; align-self: center; padding: .3rem .6rem; color: #425466; border: 1px solid #d4dde1; border-radius: .3rem; background: #fff; font-size: .8rem; cursor: pointer; }
 .tab-overflow-menu { position: fixed; z-index: 45; top: 8rem; right: 1rem; display: grid; min-width: 12rem; border: 1px solid #b8c7ce; border-radius: .45rem; background: #fff; box-shadow: 0 12px 32px rgb(21 32 43 / 22%); padding: .25rem; }
 .tab-overflow-menu button { text-align: left; font: inherit; font-size: .85rem; padding: .4rem .6rem; border: none; background: transparent; border-radius: .3rem; cursor: pointer; color: #15202b; }

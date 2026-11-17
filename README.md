@@ -10,6 +10,8 @@ The current workspace release line (`v0.4.0`) provides a focused local-document 
 - Reopen recent files from the **History** menu, with a no-record mode and a clear-history confirmation; records are stored portable-first next to the executable (`data/recent-files.json`) and never touch the registry.
 - Configure integration from the **Settings** panel: register the application into the Windows **Open with** list as a per-user candidate (explicit, one-click removable, never setting the default) and see the current version with a link to the download page — the app never checks for updates over the network and never updates itself.
 - Accept file paths supplied by Windows Explorer or **Open with**, or dropped onto the application window; the portable build does not silently modify Windows associations.
+- Restore your workspace after a restart: file tabs (with their pinned state and display aliases) reopen automatically, and unsaved work survives a crash — drafts are written to the portable `data/` folder and offered back on the next launch through a non-modal banner.
+- Pin tabs so they cannot be closed by accident and stay visible when the strip overflows; give any tab a display alias (double-click its name) without renaming the file.
 - Ship as a portable ZIP: extract it to a directory and run the executable without a traditional installer.
 
 The current alpha supports UTF-8 `.htm` and `.html` documents only. It is not a browser sandbox and does not promise safe execution of arbitrary document scripts or preservation of legacy encodings.
