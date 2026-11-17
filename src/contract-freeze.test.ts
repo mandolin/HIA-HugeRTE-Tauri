@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import mainSource from "./main.ts?raw";
+import stringsSource from "./ui/strings.ts?raw";
 import documentSource from "./document.ts?raw";
 import rustSource from "../src-tauri/src/lib.rs?raw";
 
@@ -21,6 +22,7 @@ import rustSource from "../src-tauri/src/lib.rs?raw";
 /** @lang zh-CN 说明：源码文本经 Vite `?raw` 导入（项目未引入 @types/node，不做文件系统读取）。 / @lang en Note: source text comes in via Vite's `?raw` import (the project has no @types/node, so no filesystem reads). */
 
 describe("契约冻结：界面状态键（docs/contract-freeze.md §5）", () => {
+  // 中文：语言键封装在 strings.ts（main.ts 只经 t()/tf() 间接使用）——冻结检查覆盖两个源。
   const frozenKeys = [
     "hia-hugerte.ui-font-scale",
     "hia-hugerte.editor-font-size",
@@ -33,11 +35,12 @@ describe("契约冻结：界面状态键（docs/contract-freeze.md §5）", () =
     "hia-hugerte.menubar-mode",
     "hia-hugerte.history-disabled",
     "hia-hugerte.session-restore",
-    "hia-hugerte.autosave"
+    "hia-hugerte.autosave",
+    "hia-hugerte.language"
   ];
 
   it.each(frozenKeys)("冻结键仍被使用：%s", (key) => {
-    expect(mainSource).toContain(key);
+    expect(mainSource.includes(key) || stringsSource.includes(key)).toBe(true);
   });
 });
 

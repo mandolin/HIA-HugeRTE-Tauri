@@ -79,6 +79,7 @@ Interface preferences persist in the WebView profile (`localStorage`) under thes
 | `hia-hugerte.history-disabled` | Recent-files no-record mode |
 | `hia-hugerte.session-restore` | Session restore toggle |
 | `hia-hugerte.autosave` | Autosave-drafts toggle |
+| `hia-hugerte.language` | Interface language (`zh-Hans` default / `en`) |
 
 **Evidence**: the read/write sites are centralised in `src/main.ts`; the constants are asserted by the browser structure probe described in the release evidence.
 

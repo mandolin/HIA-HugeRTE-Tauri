@@ -1,3 +1,5 @@
+import { t, tf } from "./ui/strings";
+
 export const HTML_DOCUMENT_EXTENSIONS = ["htm", "html"] as const;
 
 /**
@@ -98,9 +100,9 @@ export function createNewDocument(): DocumentState {
  */
 export function buildDiscardConfirmMessage(path: string | null): string {
   if (!path) {
-    return "当前文档 未命名文档 有尚未保存的修改（尚未保存到任何文件）。继续操作将放弃这些修改，且无法撤销。若需保留，请先取消并使用「保存」或「另存为」。";
+    return t("当前文档 未命名文档 有尚未保存的修改（尚未保存到任何文件）。继续操作将放弃这些修改，且无法撤销。若需保留，请先取消并使用「保存」或「另存为」。");
   }
-  return `当前文档 ${getDocumentLabel(path)} 有尚未保存的修改。继续操作将放弃这些修改，且无法撤销。`;
+  return tf("当前文档 {label} 有尚未保存的修改。继续操作将放弃这些修改，且无法撤销。", { label: getDocumentLabel(path) });
 }
 
 /** 将已读取的本地文档转换为干净的编辑状态（同时缓存整页拆分段，供编辑器往返重组）。 */
@@ -129,7 +131,7 @@ export function ensureHtmlExtension(path: string): string {
 
 /** 从 Windows 路径或其他平台路径中取得适合显示的文件名。 */
 export function getDocumentLabel(path: string | null): string {
-  if (!path) return "未命名文档";
+  if (!path) return t("未命名文档");
   const normalized = path.replace(/\\/g, "/");
   return normalized.slice(normalized.lastIndexOf("/") + 1) || path;
 }

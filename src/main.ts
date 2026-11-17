@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import hugerte, { type Editor } from "hugerte";
+import "./editor/langs/zh-Hans";
 import "hugerte/icons/default";
 import "hugerte/models/dom";
 import "hugerte/plugins/advlist";
@@ -30,12 +31,13 @@ import {
 } from "./editor/hugerte-compatibility-config";
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
 import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, resolveRestoredActiveOrdinal, type DraftRecord, type SessionRecord } from "./session";
+import { getLanguage, setLanguage as setUiLanguage, t, tf } from "./ui/strings";
 import { createIcon, type IconName } from "./ui/icons";
 import { scanContentLineHits } from "./ui/sidebar-search";
 import "./styles.css";
 
 const app = document.querySelector<HTMLDivElement>("#app");
-if (!app) throw new Error("无法初始化应用根节点。");
+if (!app) throw new Error(t("无法初始化应用根节点。"));
 
 app.innerHTML = `
   <main class="application-shell">
@@ -96,7 +98,7 @@ app.innerHTML = `
         <div id="source-pane" class="source-pane" aria-label="源码视图" hidden>
           <div class="source-pane__head">
             <span class="source-pane__title">源代码</span>
-            <label id="source-sync-label" class="source-pane__sync" for="source-sync-scroll"><input id="source-sync-scroll" type="checkbox" /> 同步滚动</label>
+            <label id="source-sync-label" class="source-pane__sync" for="source-sync-scroll"><input id="source-sync-scroll" type="checkbox" /><span id="source-sync-text">同步滚动</span></label>
           </div>
           <textarea id="source-editor" class="source-editor" spellcheck="false" aria-label="HTML 源码编辑区"></textarea>
         </div>
@@ -201,7 +203,7 @@ interface SaveResult { path: string; }
 
 function requiredElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
-  if (!element) throw new Error(`找不到必要的界面元素：${selector}`);
+  if (!element) throw new Error(tf("找不到必要的界面元素：{selector}", { selector }));
   return element;
 }
 
@@ -263,10 +265,10 @@ async function showAboutDialog(): Promise<void> {
   const lines = document.createElement("div");
   lines.className = "about-card__lines";
   for (const line of [
-    `版本 ${version}`,
-    "基于 HugeRTE 与 Tauri 的 Windows 便携 HTML 编辑器",
-    "MIT 许可证；第三方组件与图标许可见 THIRD_PARTY_NOTICES",
-    "本地编辑：不联网检查更新，不上传文档内容"
+    tf("版本 {version}", { version }),
+    t("基于 HugeRTE 与 Tauri 的 Windows 便携 HTML 编辑器"),
+    t("MIT 许可证；第三方组件与图标许可见 THIRD_PARTY_NOTICES"),
+    t("本地编辑：不联网检查更新，不上传文档内容")
   ]) {
     const row = document.createElement("p");
     row.textContent = line;
@@ -277,7 +279,7 @@ async function showAboutDialog(): Promise<void> {
   const close = document.createElement("button");
   close.type = "button";
   close.className = "btn-primary";
-  close.textContent = "关闭";
+  close.textContent = t("关闭");
   actions.appendChild(close);
   card.append(title, lines, actions);
   scrim.appendChild(card);
@@ -377,77 +379,77 @@ function setMenubarMode(mode: MenubarMode): void {
 function buildAppMenus(): AppMenu[] {
   return [
     {
-      label: "文件",
+      label: t("文件"),
       items: () => [
-        { label: "新建 Tab", shortcut: "Ctrl+N", action: () => void createDocument() },
-        { label: "打开…", shortcut: "Ctrl+O", action: () => void openWithDialog() },
-        { label: "保存", shortcut: "Ctrl+S", action: () => void saveDocument(false) },
-        { label: "另存为…", action: () => void saveDocument(true) },
+        { label: t("新建 Tab"), shortcut: "Ctrl+N", action: () => void createDocument() },
+        { label: t("打开…"), shortcut: "Ctrl+O", action: () => void openWithDialog() },
+        { label: t("保存"), shortcut: "Ctrl+S", action: () => void saveDocument(false) },
+        { label: t("另存为…"), action: () => void saveDocument(true) },
         { separator: true, label: "", action: () => undefined },
-        { label: "最近打开…", action: () => void toggleHistoryMenu() },
-        { label: "清空历史…", action: () => void clearHistoryFromMenu() }
+        { label: t("最近打开…"), action: () => void toggleHistoryMenu() },
+        { label: t("清空历史…"), action: () => void clearHistoryFromMenu() }
       ]
     },
     {
-      label: "编辑",
+      label: t("编辑"),
       items: () => [
-        { label: "撤销", shortcut: "Ctrl+Z", action: () => execEditorCommand("Undo") },
-        { label: "重做", shortcut: "Ctrl+Y", action: () => execEditorCommand("Redo") },
+        { label: t("撤销"), shortcut: "Ctrl+Z", action: () => execEditorCommand("Undo") },
+        { label: t("重做"), shortcut: "Ctrl+Y", action: () => execEditorCommand("Redo") },
         { separator: true, label: "", action: () => undefined },
-        { label: "查找与替换…", shortcut: "Ctrl+F", action: () => execEditorCommand("SearchReplace") }
+        { label: t("查找与替换…"), shortcut: "Ctrl+F", action: () => execEditorCommand("SearchReplace") }
       ]
     },
     {
-      label: "查看",
+      label: t("查看"),
       items: () => [
-        { label: "显示/隐藏目录树", action: () => toggleExplorerFromMenu() },
+        { label: t("显示/隐藏目录树"), action: () => toggleExplorerFromMenu() },
         // 中文：源码视图入口（W-hrt-P14 F1）——当前形态加 ✓ 前缀；再次点击同形态即退回模态（可视化）。
         //       第三形态（源代码对话框）保留在「格式 → 源代码」。
         // English: Source view entries (W-hrt-P14 F1) — the active form carries a ✓ prefix; clicking
         //          the active form again returns to the modal (visual) form. The third form (source
         //          dialog) remains under "Format → Source code".
-        { label: sourceViewMode === "split" ? "✓ 源码并排双栏" : "源码并排双栏", action: () => void setSourceViewMode(sourceViewMode === "split" ? "modal" : "split") },
-        { label: sourceViewMode === "full" ? "✓ 源码整区切换" : "源码整区切换", action: () => void setSourceViewMode(sourceViewMode === "full" ? "modal" : "full") },
+        { label: sourceViewMode === "split" ? `✓ ${t("源码并排双栏")}` : t("源码并排双栏"), action: () => void setSourceViewMode(sourceViewMode === "split" ? "modal" : "split") },
+        { label: sourceViewMode === "full" ? `✓ ${t("源码整区切换")}` : t("源码整区切换"), action: () => void setSourceViewMode(sourceViewMode === "full" ? "modal" : "full") },
         { separator: true, label: "", action: () => undefined },
-        { label: "编辑字号…", action: () => void toggleSettingsPanel() },
+        { label: t("编辑字号…"), action: () => void toggleSettingsPanel() },
         { separator: true, label: "", action: () => undefined },
-        { label: "全屏（编辑器）", action: () => execEditorCommand("mceFullScreen") }
+        { label: t("全屏（编辑器）"), action: () => execEditorCommand("mceFullScreen") }
       ]
     },
     {
-      label: "插入",
+      label: t("插入"),
       items: () => [
-        { label: "图片…", action: () => execEditorCommand("mceImage") },
-        { label: "链接…", action: () => execEditorCommand("mceLink") },
-        { label: "表格…", action: () => execEditorCommand("mceInsertTable") },
-        { label: "特殊字符…", action: () => execEditorCommand("mceShowCharmap") }
+        { label: t("图片…"), action: () => execEditorCommand("mceImage") },
+        { label: t("链接…"), action: () => execEditorCommand("mceLink") },
+        { label: t("表格…"), action: () => execEditorCommand("mceInsertTable") },
+        { label: t("特殊字符…"), action: () => execEditorCommand("mceShowCharmap") }
       ]
     },
     {
-      label: "格式",
+      label: t("格式"),
       items: () => [
-        { label: "加粗", action: () => execEditorCommand("Bold") },
-        { label: "斜体", action: () => execEditorCommand("Italic") },
-        { label: "下划线", action: () => execEditorCommand("Underline") },
+        { label: t("加粗"), action: () => execEditorCommand("Bold") },
+        { label: t("斜体"), action: () => execEditorCommand("Italic") },
+        { label: t("下划线"), action: () => execEditorCommand("Underline") },
         { separator: true, label: "", action: () => undefined },
-        { label: "清除格式", action: () => execEditorCommand("RemoveFormat") },
-        { label: "源代码", action: () => execEditorCommand("mceCodeEditor") }
+        { label: t("清除格式"), action: () => execEditorCommand("RemoveFormat") },
+        { label: t("源代码"), action: () => execEditorCommand("mceCodeEditor") }
       ]
     },
     {
-      label: "工具",
+      label: t("工具"),
       items: () => [
-        { label: "设置…", action: () => void toggleSettingsPanel() },
-        { label: "打开方式注册…", action: () => void toggleSettingsPanel() },
+        { label: t("设置…"), action: () => void toggleSettingsPanel() },
+        { label: t("打开方式注册…"), action: () => void toggleSettingsPanel() },
         { separator: true, label: "", action: () => undefined },
-        { label: "打开 Windows 默认应用设置", action: () => void openDefaultAppsSettingsFromMenu() }
+        { label: t("打开 Windows 默认应用设置"), action: () => void openDefaultAppsSettingsFromMenu() }
       ]
     },
     {
-      label: "帮助",
+      label: t("帮助"),
       items: () => [
-        { label: "打开下载页", action: () => void openReleasesPageFromMenu() },
-        { label: "关于 HIA HugeRTE", action: () => void showAboutDialog() }
+        { label: t("打开下载页"), action: () => void openReleasesPageFromMenu() },
+        { label: t("关于 HIA HugeRTE"), action: () => void showAboutDialog() }
       ]
     }
   ];
@@ -581,7 +583,7 @@ function renderCompactMenubar(): void {
   button.setAttribute("aria-haspopup", "menu");
   button.appendChild(createIcon("menu-2"));
   const label = document.createElement("span");
-  label.textContent = "菜单";
+  label.textContent = t("菜单");
   button.appendChild(label);
   button.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -635,16 +637,16 @@ async function clearHistoryFromMenu(): Promise<void> {
   const confirmed = await confirmClearHistory();
   if (!confirmed) return;
   await invoke("recent_files_clear").catch(() => undefined);
-  setStatus("已清空历史记录");
+  setStatus(t("已清空历史记录"));
 }
 
 /** @lang zh-CN 菜单「打开 Windows 默认应用设置」。 / @lang en Menu "open Windows default apps settings". */
 async function openDefaultAppsSettingsFromMenu(): Promise<void> {
   try {
     await invoke("open_default_apps_settings");
-    setStatus("已在系统「默认应用」设置中选择本程序");
+    setStatus(t("已在系统「默认应用」设置中选择本程序"));
   } catch (error) {
-    setStatus(`打开系统设置失败：${formatError(error)}`);
+    setStatus(tf("打开系统设置失败：{error}", { error: formatError(error) }));
   }
 }
 
@@ -652,9 +654,9 @@ async function openDefaultAppsSettingsFromMenu(): Promise<void> {
 async function openReleasesPageFromMenu(): Promise<void> {
   try {
     await invoke<string>("open_releases_page");
-    setStatus("已在浏览器中打开下载页");
+    setStatus(t("已在浏览器中打开下载页"));
   } catch (error) {
-    setStatus(`打开下载页失败：${formatError(error)}`);
+    setStatus(tf("打开下载页失败：{error}", { error: formatError(error) }));
   }
 }
 
@@ -673,12 +675,12 @@ function renderAppToolbar(): void {
   toolbarButtons.textContent = "";
   /** @lang zh-CN 工具栏按钮定义（图标 + 文字 + 点击行为）。 / @lang en Toolbar button definition (icon + label + click handler). */
   const buttons: Array<{ icon: Parameters<typeof createIcon>[0]; label: string; title: string; onClick: () => void; pressed?: boolean }> = [
-    { icon: "file-plus", label: "新建", title: "新建文档 (Ctrl+N)", onClick: () => void createDocument() },
-    { icon: "folder-open", label: "打开", title: "打开 HTML 文件 (Ctrl+O)", onClick: () => void openWithDialog() },
-    { icon: "device-floppy", label: "保存", title: "保存当前文档 (Ctrl+S)", onClick: () => void saveDocument(false) },
-    { icon: "file-download", label: "另存为", title: "另存为 HTML 文件", onClick: () => void saveDocument(true) },
-    { icon: "history", label: "历史", title: "最近打开的文件", onClick: () => void toggleHistoryMenu() },
-    { icon: "layout-sidebar-left-collapse", label: "目录树", title: "显示/隐藏目录树", onClick: () => toggleExplorerFromMenu(), pressed: !explorerHiddenByUser }
+    { icon: "file-plus", label: t("新建"), title: t("新建文档 (Ctrl+N)"), onClick: () => void createDocument() },
+    { icon: "folder-open", label: t("打开"), title: t("打开 HTML 文件 (Ctrl+O)"), onClick: () => void openWithDialog() },
+    { icon: "device-floppy", label: t("保存"), title: t("保存当前文档 (Ctrl+S)"), onClick: () => void saveDocument(false) },
+    { icon: "file-download", label: t("另存为"), title: t("另存为 HTML 文件"), onClick: () => void saveDocument(true) },
+    { icon: "history", label: t("历史"), title: t("最近打开的文件"), onClick: () => void toggleHistoryMenu() },
+    { icon: "layout-sidebar-left-collapse", label: t("目录树"), title: t("显示/隐藏目录树"), onClick: () => toggleExplorerFromMenu(), pressed: !explorerHiddenByUser }
   ];
   buttons.forEach((definition, index) => {
     // 中文：第 6 个按钮（目录树）前插入分隔线——与原型稿一致。
@@ -725,12 +727,12 @@ function refreshDocumentHeader(): void {
   //       on-disk file name is never touched.
   const activeAlias = tabs[activeIndex].alias;
   const display = activeAlias ? `${activeAlias} (${label})` : label;
-  const summaryText = summary.total > 1 ? `${summary.total} 个文档 · ${summary.dirty} 个未保存` : (summary.dirty > 0 ? "1 个文档 · 1 个未保存" : "1 个文档");
+  const summaryText = summary.total > 1 ? tf("{total} 个文档 · {dirty} 个未保存", { total: summary.total, dirty: summary.dirty }) : (summary.dirty > 0 ? tf("1 个文档 · 1 个未保存") : tf("1 个文档"));
   documentPath.textContent = `${summaryText}：${summary.dirty > 0 && state().dirty ? "● " : ""}${display}`;
   document.title = `${state().dirty ? "● " : ""}${display} — HIA HugeRTE`;
   // 中文：状态栏「保存状态」跟随活动 Tab 的脏标记（W-hrt-P14 F4）。
   // English: The status bar's save state follows the active tab's dirty flag (W-hrt-P14 F4).
-  statusbarSave.textContent = state().dirty ? "● 未保存" : "已保存";
+  statusbarSave.textContent = state().dirty ? t("● 未保存") : t("已保存");
   statusbarSave.classList.toggle("statusbar__save--dirty", state().dirty);
   renderTabStrip();
 }
@@ -759,7 +761,7 @@ function startTabAliasEdit(tabId: string, nameSpan: HTMLElement): void {
   input.className = "tab__edit";
   input.value = tab.alias ?? "";
   input.maxLength = TAB_ALIAS_MAX_LENGTH;
-  input.setAttribute("aria-label", "编辑标签页别名");
+  input.setAttribute("aria-label", t("编辑标签页别名"));
   nameSpan.replaceWith(input);
   input.focus();
   input.select();
@@ -818,7 +820,7 @@ function renderTabStrip(): void {
     chip.setAttribute("aria-selected", String(index === activeIndex));
     chip.tabIndex = 0;
     const displayText = getTabDisplayText(tab);
-    chip.title = tab.pinned ? `${displayText}（已固定）` : displayText;
+    chip.title = tab.pinned ? tf("{text}（已固定）", { text: displayText }) : displayText;
     if (tab.document.dirty) {
       const dot = document.createElement("span");
       dot.className = "tab__dirty";
@@ -835,7 +837,7 @@ function renderTabStrip(): void {
       unpin.type = "button";
       unpin.className = "tab__pin";
       unpin.textContent = "📌";
-      unpin.title = "解除固定";
+      unpin.title = t("解除固定");
       unpin.addEventListener("click", (event) => {
         event.stopPropagation();
         tabs = setTabPinned(tabs, tab.id, false);
@@ -872,7 +874,7 @@ function renderTabStrip(): void {
       pin.type = "button";
       pin.className = "tab__pin tab__pin--hover";
       pin.textContent = "📌";
-      pin.title = "固定标签页";
+      pin.title = t("固定标签页");
       pin.addEventListener("click", (event) => {
         event.stopPropagation();
         tabs = setTabPinned(tabs, tab.id, true);
@@ -884,7 +886,7 @@ function renderTabStrip(): void {
       close.type = "button";
       close.className = "tab__close";
       close.textContent = "✕";
-      close.title = "关闭标签页";
+      close.title = t("关闭标签页");
       close.addEventListener("click", (event) => { event.stopPropagation(); void closeTabByState(tab.id); });
       chip.appendChild(close);
     }
@@ -896,7 +898,7 @@ function renderTabStrip(): void {
     const more = document.createElement("button");
     more.type = "button";
     more.className = "tabbar__overflow";
-    more.textContent = `▾ 更多标签（${tabs.length}）`;
+    more.textContent = tf("▾ 更多标签（{count}）", { count: tabs.length });
     more.addEventListener("click", () => {
       // 中文：溢出菜单 = 依次列出被收纳的 Tab（折叠规则与渲染一致），点击即切换。
       // English: The overflow menu lists collapsed tabs in order (the same collapse rule as the
@@ -1088,7 +1090,7 @@ function updateStatusCursor(): void {
       firstNodeVisited = true;
     }
   }
-  statusbarCursor.textContent = `行 ${line} · 列 ${column}`;
+  statusbarCursor.textContent = tf("行 {line} · 列 {column}", { line, column });
 }
 
 async function initializeEditor(): Promise<void> {
@@ -1106,6 +1108,13 @@ async function initializeEditor(): Promise<void> {
     //       default active on links/images/tables) still pops up. The shell area's default menu is
     //       handled by the document-level interception below.
     contextmenu_never_use_native: true,
+    // 中文：编辑器界面语言（W-hrt-P15）——按持久化语言条件传入（zh-Hans 语言包已通过副作用
+    //       导入注册；英文为内置缺省无需包）。language 是 init 选项，切换语言后重启生效。
+    // English: The editor UI language (W-hrt-P15) — passed conditionally on the persisted language
+    //       (the zh-Hans pack registers via the side-effect import; English is the built-in
+    //       default and needs no pack). language is an init option, so switching applies after a
+    //       restart.
+    language: getLanguage() === "en" ? undefined : "zh-Hans",
     skin_url: "default", content_css: "default",
     // 中文：关闭 HugeRTE 内置状态栏（W-hrt-P14 F4）——其职责（字数统计）由应用级状态栏
     //       (#statusbar) 整合承担；wordcount 插件仍在运行并派发 wordCountUpdate。
@@ -1149,12 +1158,12 @@ async function initializeEditor(): Promise<void> {
         // 中文：编辑即排草稿写盘（防抖 1s，F7 定案⑤）。
         // English: Edits schedule a draft write (1s debounce, F7 decision ⑤).
         scheduleDraftWrite();
-        setStatus("已修改，尚未保存");
+        setStatus(t("已修改，尚未保存"));
       });
     }
   });
   editor = instances[0] ?? null;
-  if (!editor) throw new Error("HugeRTE 未能创建编辑器实例。");
+  if (!editor) throw new Error(t("HugeRTE 未能创建编辑器实例。"));
   // 中文：编辑 iframe 内的 mousedown 转发给活动浮层关闭器——iframe 是独立文档，外壳级外点监听
   //       收不到里面的点击；用户点击编辑区时浮动面板（历史/设置/面包屑下拉）必须关闭
   //       （2026-11-14 外点关闭修复的 iframe 缺口）。
@@ -1176,7 +1185,7 @@ async function initializeEditor(): Promise<void> {
   //       wordCountUpdate event carries words/characters; semantics: each CJK character counts as
   //       one word, and the character count includes spaces.
   editor.on("wordCountUpdate", (event: { wordCount: { words: number; characters: number } }) => {
-    statusbarCount.textContent = `字符 ${event.wordCount.characters} · 词 ${event.wordCount.words}`;
+    statusbarCount.textContent = tf("字符 {chars} · 词 {words}", { chars: event.wordCount.characters, words: event.wordCount.words });
   });
   // 中文：光标行列接入状态栏（W-hrt-P14 F4）——NodeChange 覆盖选区/节点变化，keyup/click 覆盖
   //       同节点内移动，SetContent 覆盖内容整体换入后的初始定位。
@@ -1267,7 +1276,7 @@ async function switchToTab(index: number): Promise<void> {
   refreshSourceTextFromEditor(true);
   resetExplorerFor(state());
   await renderExplorerTree();
-  setStatus("已切换标签页");
+  setStatus(t("已切换标签页"));
   persistSession();
 }
 
@@ -1307,7 +1316,7 @@ async function closeTabByState(id: string): Promise<void> {
   // English: Closing a tab changes structure and voids its draft (F5/F7).
   discardDraftForTab(id);
   persistSession();
-  setStatus(tabs.length > 1 ? "已关闭标签页" : "已新建文档");
+  setStatus(tabs.length > 1 ? t("已关闭标签页") : t("已新建文档"));
 }
 
 /**
@@ -1348,24 +1357,24 @@ async function openPayload(payload: DocumentPayload): Promise<void> {
     replaceActiveDocument({ ...state(), content });
   }
   const appended = appendDocumentTab(tabs, documentFromPayload(payload));
-  if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），请先关闭部分标签页。`); return; }
+  if (!appended) { setStatus(tf("标签页已达上限（{max}），请先关闭部分标签页。", { max: MAX_TABS })); return; }
   tabs = appended;
   await switchToTab(tabs.length - 1);
   if (!historyDisabled && payload.path) void invoke("recent_files_record", { path: payload.path }).catch(() => undefined);
   persistSession();
-  setStatus("已打开");
+  setStatus(t("已打开"));
 }
 
 async function openWithDialog(): Promise<void> {
   try {
     const payload = await invoke<DocumentPayload | null>("open_document_dialog");
     if (payload) await openPayload(payload);
-  } catch (error) { setStatus(`打开失败：${formatError(error)}`); }
+  } catch (error) { setStatus(tf("打开失败：{error}", { error: formatError(error) })); }
 }
 
 async function openFromPath(path: string): Promise<void> {
   try { await openPayload(await invoke<DocumentPayload>("open_document_path", { path })); }
-  catch (error) { setStatus(`无法打开文件：${formatError(error)}`); }
+  catch (error) { setStatus(tf("无法打开文件：{error}", { error: formatError(error) })); }
 }
 
 /**
@@ -1378,11 +1387,11 @@ async function openFromPath(path: string): Promise<void> {
  */
 async function createDocument(): Promise<void> {
   const appended = appendDocumentTab(tabs, createNewDocument());
-  if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），请先关闭部分标签页。`); return; }
+  if (!appended) { setStatus(tf("标签页已达上限（{max}），请先关闭部分标签页。", { max: MAX_TABS })); return; }
     tabs = appended;
     await switchToTab(tabs.length - 1);
     persistSession();
-    setStatus("已新建文档");
+    setStatus(t("已新建文档"));
 }
 
 /**
@@ -1411,11 +1420,11 @@ async function toggleHistoryMenu(): Promise<void> {
     const head = document.createElement("div");
     head.className = "history-menu__head";
     const title = document.createElement("span");
-    title.textContent = "最近打开（本地记录）";
+    title.textContent = t("最近打开（本地记录）");
     const actions = document.createElement("span");
     const clear = document.createElement("button");
     clear.type = "button";
-    clear.textContent = "清空历史";
+    clear.textContent = t("清空历史");
     clear.addEventListener("click", async () => {
       // 中文：清空不可逆——先经专用确认模态（复用 DEF-1 模态壳），确认后再执行并关闭菜单。
       // English: Clearing is irreversible — go through the dedicated confirm modal (DEF-1 shell
@@ -1424,17 +1433,17 @@ async function toggleHistoryMenu(): Promise<void> {
       const confirmed = await confirmClearHistory();
       if (confirmed) {
         await invoke("recent_files_clear").catch(() => undefined);
-        setStatus("已清空历史记录");
+        setStatus(t("已清空历史记录"));
       }
     });
     const toggleLabel = document.createElement("button");
     toggleLabel.type = "button";
-    toggleLabel.textContent = historyDisabled ? "开启记录" : "不记录模式";
+    toggleLabel.textContent = historyDisabled ? t("开启记录") : t("不记录模式");
     toggleLabel.addEventListener("click", () => {
       historyDisabled = !historyDisabled;
       localStorage.setItem("hia-hugerte.history-disabled", historyDisabled ? "1" : "0");
       menu.remove();
-      setStatus(historyDisabled ? "已开启不记录模式（新打开的文件不再记录）" : "已恢复历史记录");
+      setStatus(historyDisabled ? t("已开启不记录模式（新打开的文件不再记录）") : t("已恢复历史记录"));
     });
     actions.append(clear, toggleLabel);
     head.append(title, actions);
@@ -1444,7 +1453,7 @@ async function toggleHistoryMenu(): Promise<void> {
     if (entries.length === 0) {
       const empty = document.createElement("div");
       empty.className = "history-item";
-      empty.textContent = historyDisabled ? "（不记录模式已开启）" : "暂无历史记录";
+      empty.textContent = historyDisabled ? t("（不记录模式已开启）") : t("暂无历史记录");
       menu.appendChild(empty);
     }
     for (const entry of entries) {
@@ -1468,7 +1477,7 @@ async function toggleHistoryMenu(): Promise<void> {
     }
     const footer = document.createElement("div");
     footer.className = "history-menu__foot";
-    footer.textContent = "记录仅保存在本机（便携目录优先；不可写时 %APPDATA%\\HIA-HugeRTE）";
+    footer.textContent = t("记录仅保存在本机（便携目录优先；不可写时 %APPDATA%\\HIA-HugeRTE）");
     menu.appendChild(footer);
     menu.addEventListener("click", (event) => { if (event.target === menu) menu.remove(); });
     document.body.appendChild(menu);
@@ -1600,7 +1609,7 @@ async function toggleSettingsPanel(): Promise<void> {
   const head = document.createElement("div");
   head.className = "settings-panel__head";
   const headTitle = document.createElement("span");
-  headTitle.textContent = "设置";
+  headTitle.textContent = t("设置");
   const headVersion = document.createElement("span");
   headVersion.className = "settings-panel__version";
   headVersion.textContent = "";
@@ -1613,10 +1622,10 @@ async function toggleSettingsPanel(): Promise<void> {
   assocSection.className = "settings-panel__section";
   const assocTitle = document.createElement("div");
   assocTitle.className = "settings-panel__title";
-  assocTitle.textContent = "打开方式";
+  assocTitle.textContent = t("打开方式");
   const assocNote = document.createElement("div");
   assocNote.className = "settings-panel__note";
-  assocNote.textContent = "注册后本应用会出现在 Windows「打开方式」列表中。不会设为默认打开程序，也不修改系统的默认应用设置。";
+  assocNote.textContent = t("注册后本应用会出现在 Windows「打开方式」列表中。不会设为默认打开程序，也不修改系统的默认应用设置。");
   const assocRow = document.createElement("div");
   assocRow.className = "settings-panel__row";
   const assocState = document.createElement("span");
@@ -1627,16 +1636,16 @@ async function toggleSettingsPanel(): Promise<void> {
   const assocHelper = document.createElement("button");
   assocHelper.type = "button";
   assocHelper.className = "settings-panel__quiet";
-  assocHelper.textContent = "打开 Windows 默认应用设置";
+  assocHelper.textContent = t("打开 Windows 默认应用设置");
   assocHelper.addEventListener("click", async () => {
     // 中文：引导用户在系统界面自行选择默认程序（本应用不设默认）。打开系统「默认应用」页。
     // English: Guide the user to pick a default in the system UI (this app never sets one). Opens the
     //       Windows "Default apps" settings page.
     try {
       await invoke("open_default_apps_settings");
-      setStatus("已在系统「默认应用」设置中选择本程序");
+      setStatus(t("已在系统「默认应用」设置中选择本程序"));
     } catch (error) {
-      setStatus(`打开系统设置失败：${formatError(error)}`);
+      setStatus(tf("打开系统设置失败：{error}", { error: formatError(error) }));
     }
   });
   const assocPath = document.createElement("div");
@@ -1656,8 +1665,8 @@ async function toggleSettingsPanel(): Promise<void> {
     assocState.textContent = "";
     const dot = document.createElement("span");
     dot.className = `settings-panel__dot${registered ? " settings-panel__dot--on" : ""}`;
-    assocState.append(dot, document.createTextNode(registered ? "已注册" : "未注册"));
-    assocAction.textContent = registered ? "移除注册" : "注册到打开方式列表";
+    assocState.append(dot, document.createTextNode(registered ? t("已注册") : t("未注册")));
+    assocAction.textContent = registered ? t("移除注册") : t("注册到打开方式列表");
     assocAction.dataset.action = registered ? "unregister" : "register";
     // 中文：加载占位阶段会临时隐藏主按钮，渲染即恢复可见。
     // English: The loading placeholder temporarily hides the primary button; rendering restores it.
@@ -1665,7 +1674,7 @@ async function toggleSettingsPanel(): Promise<void> {
     assocPath.textContent = registered && currentExe ? currentExe : "";
     assocPath.hidden = !(registered && currentExe);
     assocNote.textContent = registered
-      ? "已注册到 Windows「打开方式」列表（未设为默认）。在系统中选择本应用时，Windows 会把文件路径传给本程序。"
+      ? t("已注册到 Windows「打开方式」列表（未设为默认）。在系统中选择本应用时，Windows 会把文件路径传给本程序。")
       : "注册后本应用会出现在 Windows「打开方式」列表中。不会设为默认打开程序，也不修改系统的默认应用设置。";
   };
 
@@ -1681,12 +1690,12 @@ async function toggleSettingsPanel(): Promise<void> {
       // English: Write the operation result back to the cache — the next panel open shows it directly.
       associationCache = result;
       renderAssociation(result.registered, result.currentExe);
-      setStatus(result.registered ? "已注册到「打开方式」列表（可在系统设置中选择）" : "已移除「打开方式」注册");
+      setStatus(result.registered ? t("已注册到「打开方式」列表（可在系统设置中选择）") : t("已移除「打开方式」注册"));
     } catch (error) {
       // 中文：失败保留在面板内提示，不关闭面板（便于用户重试或查看原因）。
       // English: Keep the failure visible inside the panel and do not close it (so the user can retry
       //       or read the reason).
-      assocNote.textContent = `操作失败：${formatError(error)}`;
+      assocNote.textContent = tf("操作失败：{error}", { error: formatError(error) });
     } finally {
       assocAction.disabled = false;
     }
@@ -1702,7 +1711,7 @@ async function toggleSettingsPanel(): Promise<void> {
   appearanceSection.className = "settings-panel__section";
   const appearanceTitle = document.createElement("div");
   appearanceTitle.className = "settings-panel__title";
-  appearanceTitle.textContent = "界面与编辑器";
+  appearanceTitle.textContent = t("界面与编辑器");
   const appearanceRow = document.createElement("div");
   appearanceRow.className = "settings-panel__row";
 
@@ -1711,9 +1720,9 @@ async function toggleSettingsPanel(): Promise<void> {
   //          never the iframe content.
   const uiSizeLabel = document.createElement("label");
   uiSizeLabel.className = "settings-panel__state";
-  uiSizeLabel.textContent = "界面字号 ";
+  uiSizeLabel.textContent = t("界面字号 ");
   const uiSizeSelect = document.createElement("select");
-  for (const [value, text] of [["1", "标准"], ["1.125", "较大"], ["1.25", "大"], ["0.9", "紧凑"]] as const) {
+  for (const [value, text] of [["1", t("标准")], ["1.125", t("较大")], ["1.25", t("大")], ["0.9", t("紧凑")]] as const) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = text;
@@ -1727,7 +1736,7 @@ async function toggleSettingsPanel(): Promise<void> {
   // English: Editor size — applies only to the editor body (HugeRTE iframe body).
   const fontSizeLabel = document.createElement("label");
   fontSizeLabel.className = "settings-panel__state";
-  fontSizeLabel.textContent = "编辑字号 ";
+  fontSizeLabel.textContent = t("编辑字号 ");
   fontSize = document.createElement("select");
   fontSize.id = "editor-font-size";
   for (const size of ["14px", "16px", "18px", "20px"]) {
@@ -1746,9 +1755,9 @@ async function toggleSettingsPanel(): Promise<void> {
   //          zero-height placeholder (shell grid alignment).
   const menubarLabel = document.createElement("label");
   menubarLabel.className = "settings-panel__state";
-  menubarLabel.textContent = "菜单栏 ";
+  menubarLabel.textContent = t("菜单栏 ");
   const menubarSelect = document.createElement("select");
-  for (const [value, text] of [["full", "显示"], ["compact", "精简"], ["hidden", "隐藏"]] as const) {
+  for (const [value, text] of [["full", t("显示")], ["compact", t("精简")], ["hidden", t("隐藏")]] as const) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = text;
@@ -1757,7 +1766,27 @@ async function toggleSettingsPanel(): Promise<void> {
   menubarSelect.value = menubarMode;
   menubarSelect.addEventListener("change", () => setMenubarMode(menubarSelect.value as MenubarMode));
   menubarLabel.appendChild(menubarSelect);
-  appearanceRow.append(uiSizeLabel, fontSizeLabel, menubarLabel);
+  // 中文：界面语言（W-hrt-P15）——切换即时重建壳文案；编辑器语言包随重启生效（init 选项）。
+  const languageLabel = document.createElement("label");
+  languageLabel.className = "settings-panel__state";
+  languageLabel.textContent = t("语言 ");
+  const languageSelect = document.createElement("select");
+  languageSelect.id = "ui-language";
+  for (const option of [["zh-Hans", t("中文")], ["en", t("English")]] as const) {
+    const optionElement = document.createElement("option");
+    optionElement.value = option[0];
+    optionElement.textContent = option[1];
+    languageSelect.appendChild(optionElement);
+  }
+  languageSelect.value = getLanguage();
+  languageSelect.addEventListener("change", () => {
+    if (setUiLanguage(languageSelect.value === "en" ? "en" : "zh-Hans")) {
+      rebuildShellChrome();
+      setStatus(t("界面语言已切换（编辑器语言包在重启后生效）。"));
+    }
+  });
+  languageLabel.appendChild(languageSelect);
+  appearanceRow.append(uiSizeLabel, fontSizeLabel, menubarLabel, languageLabel);
   appearanceSection.append(appearanceTitle, appearanceRow);
   panel.appendChild(appearanceSection);
 
@@ -1770,7 +1799,7 @@ async function toggleSettingsPanel(): Promise<void> {
   dataSection.className = "settings-panel__section";
   const dataTitle = document.createElement("div");
   dataTitle.className = "settings-panel__title";
-  dataTitle.textContent = "数据与恢复";
+  dataTitle.textContent = t("数据与恢复");
   const sessionLabel = document.createElement("label");
   sessionLabel.className = "settings-panel__check";
   const sessionCheckbox = document.createElement("input");
@@ -1783,7 +1812,7 @@ async function toggleSettingsPanel(): Promise<void> {
     if (sessionRestoreEnabled) persistSession();
     else if (isTauriRuntimeCheck()) void invoke("session_clear").catch(() => undefined);
   });
-  sessionLabel.append(sessionCheckbox, document.createTextNode(" 会话恢复（重启后恢复上次的标签页）"));
+  sessionLabel.append(sessionCheckbox, document.createTextNode(t(" 会话恢复（重启后恢复上次的标签页）")));
   const autosaveLabel = document.createElement("label");
   autosaveLabel.className = "settings-panel__check";
   const autosaveCheckbox = document.createElement("input");
@@ -1800,10 +1829,10 @@ async function toggleSettingsPanel(): Promise<void> {
       void invoke("autosave_clear").catch(() => undefined);
     }
   });
-  autosaveLabel.append(autosaveCheckbox, document.createTextNode(" 自动保存草稿（崩溃后恢复未保存内容）"));
+  autosaveLabel.append(autosaveCheckbox, document.createTextNode(t(" 自动保存草稿（崩溃后恢复未保存内容）")));
   const dataNote = document.createElement("div");
   dataNote.className = "settings-panel__note";
-  dataNote.textContent = "会话与草稿仅保存在本机（便携目录 data/ 优先；不可写时 %APPDATA%\\HIA-HugeRTE），不上传、不联网。";
+  dataNote.textContent = t("会话与草稿仅保存在本机（便携目录 data/ 优先；不可写时 %APPDATA%\\HIA-HugeRTE），不上传、不联网。");
   dataSection.append(dataTitle, sessionLabel, autosaveLabel, dataNote);
   panel.appendChild(dataSection);
 
@@ -1814,15 +1843,15 @@ async function toggleSettingsPanel(): Promise<void> {
   versionSection.className = "settings-panel__section";
   const versionTitle = document.createElement("div");
   versionTitle.className = "settings-panel__title";
-  versionTitle.textContent = "版本";
+  versionTitle.textContent = t("版本");
   const versionNote = document.createElement("div");
   versionNote.className = "settings-panel__note";
-  versionNote.textContent = "本程序不联网检查更新、不会自动下载或替换自身；有新版本时请前往下载页手动替换。";
+  versionNote.textContent = t("本程序不联网检查更新、不会自动下载或替换自身；有新版本时请前往下载页手动替换。");
   const versionRow = document.createElement("div");
   versionRow.className = "settings-panel__row";
   const versionState = document.createElement("span");
   versionState.className = "settings-panel__state";
-  versionState.textContent = "当前版本 —";
+  versionState.textContent = t("当前版本 —");
   const versionAction = document.createElement("button");
   versionAction.type = "button";
   versionAction.className = "settings-panel__action";
@@ -1831,9 +1860,9 @@ async function toggleSettingsPanel(): Promise<void> {
     versionAction.disabled = true;
     try {
       await invoke<string>("open_releases_page");
-      setStatus("已在浏览器中打开下载页");
+      setStatus(t("已在浏览器中打开下载页"));
     } catch (error) {
-      setStatus(`打开下载页失败：${formatError(error)}`);
+      setStatus(tf("打开下载页失败：{error}", { error: formatError(error) }));
     } finally {
       versionAction.disabled = false;
     }
@@ -1888,28 +1917,28 @@ async function toggleSettingsPanel(): Promise<void> {
   if (associationCache) {
     renderAssociation(associationCache.registered, associationCache.currentExe);
   } else {
-    assocState.textContent = "读取中…";
+    assocState.textContent = t("读取中…");
     assocAction.hidden = true;
     try {
       const status = await invoke<AssociationStatusPayload>("open_with_status");
       associationCache = status;
       renderAssociation(status.registered, status.currentExe);
     } catch {
-      assocState.textContent = "状态未知";
-      assocNote.textContent = "无法读取当前注册状态。";
+      assocState.textContent = t("状态未知");
+      assocNote.textContent = t("无法读取当前注册状态。");
     }
   }
   if (versionInfoCache) {
     headVersion.textContent = `v${versionInfoCache.version}`;
-    versionState.textContent = `当前版本 ${versionInfoCache.version}`;
+    versionState.textContent = tf("当前版本 {version}", { version: versionInfoCache.version });
   } else {
     try {
       const info = await invoke<AppVersionInfoPayload>("app_version_info");
       versionInfoCache = info;
       headVersion.textContent = `v${info.version}`;
-      versionState.textContent = `当前版本 ${info.version}`;
+      versionState.textContent = tf("当前版本 {version}", { version: info.version });
     } catch {
-      versionState.textContent = "当前版本未知";
+      versionState.textContent = t("当前版本未知");
     }
   }
 }
@@ -1918,8 +1947,8 @@ async function toggleSettingsPanel(): Promise<void> {
 function confirmClearHistory(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const originalText = confirmDiscardButton.textContent;
-    confirmDiscardButton.textContent = "清空历史";
-    void showConfirmModal("将删除本机全部历史记录，且无法撤销。确定清空？").then((result) => {
+    confirmDiscardButton.textContent = t("清空历史");
+    void showConfirmModal(t("将删除本机全部历史记录，且无法撤销。确定清空？")).then((result) => {
       confirmDiscardButton.textContent = originalText;
       resolve(result);
     });
@@ -1989,11 +2018,11 @@ async function saveDocument(forceSaveAs: boolean): Promise<void> {
     //          archive follows (F5).
     discardDraftForTab(tabs[activeIndex].id);
     persistSession();
-    setStatus("已保存");
-  } catch (error) { setStatus(`保存失败：${formatError(error)}`); }
+    setStatus(t("已保存"));
+  } catch (error) { setStatus(tf("保存失败：{error}", { error: formatError(error) })); }
 }
 
-function formatError(error: unknown): string { return typeof error === "string" ? error : "发生未知错误。"; }
+function formatError(error: unknown): string { return typeof error === "string" ? error : t("发生未知错误。"); }
 
 /** @lang zh-CN 目录树条目的 Rust 序列化形态（list_directory_tree 返回，camelCase）。 / @lang en Rust shape of a tree entry (from list_directory_tree, camelCase). */
 interface TreeEntryPayload { name: string; isDir: boolean; size: number; isSupportedAsset: boolean; }
@@ -2112,7 +2141,7 @@ async function renderExplorerTree(): Promise<void> {
     return;
   }
   updateExplorerVisibility();
-  explorerScope.textContent = "浏览：可逐级导航（文档内容引用仍限于文档目录作用域）";
+  explorerScope.textContent = t("浏览：可逐级导航（文档内容引用仍限于文档目录作用域）");
   renderBreadcrumb();
   const rootRow = buildTreeRow(
     { name: pathLeafName(explorerRootPath), isDir: true, size: 0, isSupportedAsset: false },
@@ -2124,7 +2153,7 @@ async function renderExplorerTree(): Promise<void> {
   if (!expandedDirs.has(explorerRootPath)) {
     const hint = document.createElement("div");
     hint.className = "tree__empty";
-    hint.textContent = "点行首按钮展开目录";
+    hint.textContent = t("点行首按钮展开目录");
     explorerTree.appendChild(hint);
     return;
   }
@@ -2230,7 +2259,7 @@ function renderBreadcrumb(): void {
   // 中文：设备段用文字"此电脑"（对齐中文版 Win11；emoji 🖥 在中文系统字体栈下会渲染成方块）。
   // English: The device segment shows "此电脑" (matching Chinese Windows 11; the 🖥 emoji renders as a
   //       tofu box under the CJK system font stack).
-  device.textContent = "此电脑";
+  device.textContent = t("此电脑");
   explorerBreadcrumb.appendChild(device);
   const segments = splitBreadcrumb(explorerRootPath);
   segments.forEach((segment) => {
@@ -2251,7 +2280,7 @@ function renderBreadcrumb(): void {
       caret.type = "button";
       caret.className = "explorer__crumb-caret";
       caret.textContent = "▾";
-      caret.title = "显示同级文件夹";
+      caret.title = t("显示同级文件夹");
       caret.addEventListener("click", (event) => { event.stopPropagation(); void openCrumbDropdown(caret, segment.path); });
       item.appendChild(caret);
     }
@@ -2288,7 +2317,7 @@ async function openCrumbDropdown(anchor: HTMLElement, segmentPath: string): Prom
   if (folders.length === 0) {
     const empty = document.createElement("div");
     empty.className = "explorer__dropdown-empty";
-    empty.textContent = "（无同级文件夹）";
+    empty.textContent = t("（无同级文件夹）");
     menu.appendChild(empty);
   }
   for (const folder of folders) {
@@ -2364,7 +2393,7 @@ async function appendTreeChildren(container: HTMLElement, directoryPath: string,
   if (entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "tree__empty";
-    empty.textContent = indent === 1 ? "目录为空或不可读" : "（空）";
+    empty.textContent = indent === 1 ? t("目录为空或不可读") : t("（空）");
     container.appendChild(empty);
     return;
   }
@@ -2407,7 +2436,7 @@ function buildTreeRow(entry: TreeEntryPayload, entryPath: string, expanded: bool
     toggle.type = "button";
     toggle.className = "tree__caret";
     toggle.textContent = expanded ? "▾" : "▸";
-    toggle.title = expanded ? "收起目录" : "展开目录";
+    toggle.title = expanded ? t("收起目录") : t("展开目录");
     toggle.setAttribute("aria-expanded", String(expanded));
     toggle.addEventListener("click", (event) => { event.stopPropagation(); void toggleExpandDir(entryPath); });
     row.appendChild(toggle);
@@ -2517,10 +2546,10 @@ async function showAssetPreview(absolutePath: string): Promise<void> {
     title.textContent = pathLeafName(absolutePath);
     const ref = document.createElement("div");
     ref.className = "explorer__ref";
-    ref.textContent = `相对引用：${relativePath} · 约 ${size} KB`;
+    ref.textContent = tf("相对引用：{relativePath} · 约 {size} KB", { relativePath, size });
     const insert = document.createElement("button");
     insert.type = "button";
-    insert.textContent = "插入相对引用";
+    insert.textContent = t("插入相对引用");
     insert.addEventListener("click", () => {
       editor?.insertContent(`<img src="${relativePath}" alt="">`);
       editor?.nodeChanged();
@@ -2550,10 +2579,10 @@ type SidebarMode = "files" | "outline" | "search";
 const SIDEBAR_MODE_KEY = "hia-hugerte.sidebar-mode";
 
 /** @lang zh-CN 模式条定义：图标 + 文字（方案 B 定案稿④：文案取最短词；title/aria-label 恒为全称）。 / @lang en Mode-strip definitions: icon + label (option-B final draft §4: shortest words; title/aria-label always carry the full word). */
-const SIDEBAR_MODE_DEFS: ReadonlyArray<{ mode: SidebarMode; icon: IconName; label: string }> = [
-  { mode: "files", icon: "folders", label: "资源" },
-  { mode: "outline", icon: "list", label: "大纲" },
-  { mode: "search", icon: "search", label: "搜索" }
+const SIDEBAR_MODE_DEFS: ReadonlyArray<{ mode: SidebarMode; icon: IconName; label: () => string }> = [
+  { mode: "files", icon: "folders", label: () => t("资源") },
+  { mode: "outline", icon: "list", label: () => t("大纲") },
+  { mode: "search", icon: "search", label: () => t("搜索") }
 ];
 
 /**
@@ -2579,6 +2608,112 @@ let sidebarMode: SidebarMode = (() => {
  * ellipsis)`, no wrapping). Semantics via `role=tablist/tab` + `aria-selected`; the label may be
  * visually ellipsized but `title` always carries the full word.
  */
+/**
+ * @lang zh-CN
+ * 应用静态骨架的可见文案按当前语言刷新（W-hrt-P15）：innerHTML 模板里的中文（面板标题、
+ * 按钮文案、aria-label、placeholder 等）不是可重渲函数的产物，切换语言后由本函数逐元素
+ * 更新。动态文案（菜单/工具栏/Tab 条/状态栏/面板）由各自的重渲函数在 rebuildShellChrome
+ * 中统一调用。
+ * @lang en
+ * Refresh the static skeleton's visible copy by the current language (W-hrt-P15): Chinese text
+ * inside the innerHTML template (panel titles, button copy, aria-labels, placeholders) is not
+ * produced by re-renderable functions, so this function updates it element by element after a
+ * language switch. Dynamic copy (menus/toolbar/tab strip/status bar/panels) is refreshed by
+ * their re-render functions, invoked together from rebuildShellChrome.
+ */
+function applyShellLanguage(): void {
+  // 中文：源码栏标题与同步滚动文案。
+  const sourceTitle = document.querySelector(".source-pane__title");
+  if (sourceTitle) sourceTitle.textContent = t("源代码");
+  const syncText = document.getElementById("source-sync-text");
+  if (syncText) syncText.textContent = t("同步滚动");
+  // 中文：草稿提示条按钮。
+  const restoreButton = document.getElementById("draft-restore");
+  if (restoreButton) restoreButton.textContent = t("恢复为 Tab");
+  const discardButton = document.getElementById("draft-discard");
+  if (discardButton) discardButton.textContent = t("全部丢弃");
+  // 中文：拖放提示。
+  const drop = document.getElementById("drop-indicator");
+  if (drop) drop.textContent = t("释放以打开 HTML 文件");
+  // 中文：弃改确认卡（标题与两个按钮）。
+  const confirmTitle = document.getElementById("confirm-title");
+  if (confirmTitle) confirmTitle.textContent = t("放弃未保存的修改？");
+  const cancelButton = document.getElementById("confirm-cancel");
+  if (cancelButton) cancelButton.textContent = t("取消");
+  const discardConfirm = document.getElementById("confirm-discard");
+  if (discardConfirm) discardConfirm.textContent = t("放弃修改并继续");
+  // 中文：状态栏初始文案（动态值随运行事件覆盖）。
+  const save = document.getElementById("status-save");
+  if (save) save.textContent = t("已保存");
+  const count = document.getElementById("status-count");
+  if (count) count.textContent = t("字符 0 · 词 0");
+  const cursor = document.getElementById("status-cursor");
+  if (cursor) cursor.textContent = t("行 1 · 列 1");
+  // 中文：状态栏与草稿提示条的 aria（标记里的静态文案）。
+  const statusbarElement = document.getElementById("statusbar");
+  if (statusbarElement) statusbarElement.setAttribute("aria-label", t("状态栏"));
+  const draftRegion = document.getElementById("draft-banner");
+  if (draftRegion) draftRegion.setAttribute("aria-label", t("未保存草稿"));
+  // 中文：设置齿轮标题。
+  settingsButton.title = t("设置");
+  settingsButton.setAttribute("aria-label", t("设置"));
+  // 中文：结构化 aria-label（菜单/工具栏/Tab 条/侧栏/源码栏/编辑器）。
+  menubarElement.setAttribute("aria-label", t("主菜单"));
+  toolbarElement.setAttribute("aria-label", t("文档操作"));
+  tabbar.setAttribute("aria-label", t("打开的文档"));
+  explorerPanel.setAttribute("aria-label", t("文档侧栏"));
+  explorerModes.setAttribute("aria-label", t("侧栏视图"));
+  explorerOutline.setAttribute("aria-label", t("文档大纲"));
+  const searchInput = document.getElementById("explorer-search-input") as HTMLInputElement | null;
+  if (searchInput) {
+    searchInput.placeholder = t("在所有打开的文档中查找…");
+    searchInput.setAttribute("aria-label", t("在所有打开的文档中查找"));
+  }
+  const editorArea = document.getElementById("hugerte-editor");
+  if (editorArea) editorArea.setAttribute("aria-label", t("HTML 文档编辑器"));
+  const sourceArea = document.getElementById("source-editor");
+  if (sourceArea) sourceArea.setAttribute("aria-label", t("HTML 源码编辑区"));
+  // 中文：侧栏头部「资源管理」与刷新按钮标题。
+  const head = explorerPanel.querySelector(".explorer__head > span");
+  if (head && head.firstChild) {
+    head.firstChild.nodeValue = `${t("资源管理")} `;
+  }
+  const refreshTitle = explorerPanel.querySelector("#explorer-refresh") as HTMLElement | null;
+  if (refreshTitle) refreshTitle.title = t("刷新目录树");
+  // 中文：面包屑行的「向上」按钮标题。
+  const upButton = document.getElementById("explorer-up");
+  if (upButton) {
+    upButton.title = t("向上（浏览上一级目录）");
+    upButton.setAttribute("aria-label", t("向上"));
+  }
+  const breadcrumb = document.getElementById("explorer-breadcrumb");
+  if (breadcrumb) breadcrumb.setAttribute("aria-label", t("目录路径"));
+  // 中文：分隔条标题/aria（资源树与源码栏）。
+  explorerResizer.setAttribute("aria-label", t("调整资源管理器宽度"));
+  explorerResizer.title = t("拖动调整资源管理器宽度（聚焦后可用左右方向键微调）");
+  sourceResizer.setAttribute("aria-label", t("调整源码栏宽度"));
+  sourceResizer.title = t("拖动调整源码栏宽度（聚焦后可用左右方向键微调）");
+}
+
+/**
+ * @lang zh-CN
+ * 语言切换后的壳重建总入口：静态骨架文案 + 全部可重渲动态区域（菜单/工具栏/Tab 条/状态栏
+ * /模式条/侧栏可见视图）。
+ * @lang en
+ * The rebuild entry after a language switch: static skeleton copy plus every re-renderable
+ * dynamic area (menus/toolbar/tab strip/status bar/mode strip/visible sidebar views).
+ */
+function rebuildShellChrome(): void {
+  applyShellLanguage();
+  renderAppMenubar();
+  renderAppToolbar();
+  renderTabStrip();
+  refreshDocumentHeader();
+  renderSidebarModeStrip();
+  refreshOutlineIfVisible();
+  refreshSearchIfVisible();
+}
+
 function renderSidebarModeStrip(): void {
   explorerModes.textContent = "";
   for (const definition of SIDEBAR_MODE_DEFS) {
@@ -2587,14 +2722,14 @@ function renderSidebarModeStrip(): void {
     button.className = "explorer__mode";
     button.dataset.mode = definition.mode;
     button.setAttribute("role", "tab");
-    button.title = definition.label;
-    button.setAttribute("aria-label", definition.label);
+    button.title = definition.label();
+    button.setAttribute("aria-label", definition.label());
     button.setAttribute("aria-selected", String(definition.mode === sidebarMode));
     if (definition.mode === sidebarMode) button.classList.add("explorer__mode--active");
     button.appendChild(createIcon(definition.icon));
     const label = document.createElement("span");
     label.className = "explorer__mode-text";
-    label.textContent = definition.label;
+    label.textContent = definition.label();
     button.appendChild(label);
     explorerModes.appendChild(button);
   }
@@ -2662,7 +2797,7 @@ function collectOutlineEntries(): OutlineEntry[] {
   if (editor) {
     return Array.from(editor.getBody().querySelectorAll("h1,h2,h3,h4,h5,h6"), (node) => ({
       level: Number(node.tagName.charAt(1)),
-      text: (node.textContent ?? "").trim() || "（空标题）",
+      text: (node.textContent ?? "").trim() || t("（空标题）"),
       node
     }));
   }
@@ -2672,7 +2807,7 @@ function collectOutlineEntries(): OutlineEntry[] {
   const parsed = new DOMParser().parseFromString(state().content, "text/html");
   return Array.from(parsed.querySelectorAll("h1,h2,h3,h4,h5,h6"), (node) => ({
     level: Number(node.tagName.charAt(1)),
-    text: (node.textContent ?? "").trim() || "（空标题）",
+    text: (node.textContent ?? "").trim() || t("（空标题）"),
     node: null
   }));
 }
@@ -2701,7 +2836,7 @@ function renderDocumentOutline(): void {
   if (entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "outline__empty";
-    empty.textContent = "文档没有标题（h1–h6），无法生成大纲";
+    empty.textContent = t("文档没有标题（h1–h6），无法生成大纲");
     explorerOutline.appendChild(empty);
     return;
   }
@@ -2740,7 +2875,7 @@ function renderDocumentOutline(): void {
       caret.type = "button";
       caret.className = "outline__caret";
       caret.textContent = collapsed ? "▸" : "▾";
-      caret.title = collapsed ? "展开此节" : "折叠此节";
+      caret.title = collapsed ? t("展开此节") : t("折叠此节");
       caret.setAttribute("aria-expanded", String(!collapsed));
       caret.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -2828,7 +2963,7 @@ function runSidebarSearch(): void {
   if (query.trim().length === 0) {
     const hint = document.createElement("div");
     hint.className = "explorer__search-empty";
-    hint.textContent = "输入关键字，在所有打开的文档中查找";
+    hint.textContent = t("输入关键字，在所有打开的文档中查找");
     explorerSearchResults.appendChild(hint);
     return;
   }
@@ -2847,7 +2982,7 @@ function runSidebarSearch(): void {
     name.title = getDocumentLabel(tab.document.path);
     const count = document.createElement("span");
     count.className = "explorer__search-group-count";
-    count.textContent = scan.truncated ? `${scan.hits.length}+ 行` : `${scan.hits.length} 行`;
+    count.textContent = scan.truncated ? tf("{hits}+ 行", { hits: scan.hits.length }) : tf("{hits} 行", { hits: scan.hits.length });
     head.append(name, count);
     group.appendChild(head);
     for (const hit of scan.hits) {
@@ -2874,7 +3009,7 @@ function runSidebarSearch(): void {
         //          look for the match inside the body text.
         void switchToTab(index).then(() => {
           const revealed = revealFirstTextMatch(query);
-          setStatus(revealed ? `已定位第 ${hit.line} 行命中（源码行号）` : "已切换文档；该命中位于标签或属性中，未定位正文");
+          setStatus(revealed ? tf("已定位第 {line} 行命中（源码行号）", { line: hit.line }) : t("已切换文档；该命中位于标签或属性中，未定位正文"));
         });
       });
       group.appendChild(row);
@@ -2882,7 +3017,7 @@ function runSidebarSearch(): void {
     if (scan.truncated) {
       const more = document.createElement("div");
       more.className = "explorer__search-more";
-      more.textContent = `仅显示前 ${SEARCH_MAX_HITS_PER_FILE} 行命中`;
+      more.textContent = tf("仅显示前 {max} 行命中", { max: SEARCH_MAX_HITS_PER_FILE });
       group.appendChild(more);
     }
     explorerSearchResults.appendChild(group);
@@ -2890,7 +3025,7 @@ function runSidebarSearch(): void {
   if (groupsWithHits === 0) {
     const empty = document.createElement("div");
     empty.className = "explorer__search-empty";
-    empty.textContent = "未找到命中";
+    empty.textContent = t("未找到命中");
     explorerSearchResults.appendChild(empty);
   }
 }
@@ -3313,7 +3448,7 @@ async function restoreSession(): Promise<boolean> {
   applyEditorFontSize();
   resetExplorerFor(state());
   await renderExplorerTree();
-  setStatus(skipped > 0 ? `已恢复 ${restoredTabIds.length} 个文档；${skipped} 个已失效被跳过` : `已恢复 ${restoredTabIds.length} 个文档`);
+  setStatus(skipped > 0 ? tf("已恢复 {restored} 个文档；{skipped} 个已失效被跳过", { restored: restoredTabIds.length, skipped }) : tf("已恢复 {restored} 个文档", { restored: restoredTabIds.length }));
   return true;
 }
 
@@ -3394,9 +3529,9 @@ function renderDraftBanner(): void {
   const named = pendingDrafts.filter((draft) => draft.origin !== null).map((draft) => draftTitle(draft.origin));
   const untitledCount = pendingDrafts.length - named.length;
   const parts: string[] = [];
-  if (named.length > 0) parts.push(named.slice(0, 3).join("、") + (named.length > 3 ? " 等" : ""));
-  if (untitledCount > 0) parts.push(`${untitledCount} 份未命名文档`);
-  draftBannerText.textContent = `检测到 ${pendingDrafts.length} 份上次会话的未保存草稿（${parts.join("，")}）`;
+  if (named.length > 0) parts.push(named.slice(0, 3).join("、") + (named.length > 3 ? t(" 等") : ""));
+  if (untitledCount > 0) parts.push(tf("{untitled} 份未命名文档", { untitled: untitledCount }));
+  draftBannerText.textContent = tf("检测到 {count} 份上次会话的未保存草稿（{list}）", { count: pendingDrafts.length, list: parts.join("、") });
   draftBanner.hidden = false;
 }
 
@@ -3435,7 +3570,7 @@ async function restoreDrafts(): Promise<void> {
       continue;
     }
     const appended = appendDocumentTab(tabs, { ...state(), content, path: draft.origin, dirty: true, baseDir: state().baseDir });
-    if (!appended) { setStatus(`标签页已达上限（${MAX_TABS}），部分草稿未恢复。`); break; }
+    if (!appended) { setStatus(tf("标签页已达上限（{max}），部分草稿未恢复。", { max: MAX_TABS })); break; }
     tabs = appended;
     await switchToTab(tabs.length - 1);
     // 中文：恢复出的 Tab 保留草稿 id——后续编辑继续写回同一草稿，不必重新分配。
@@ -3444,16 +3579,16 @@ async function restoreDrafts(): Promise<void> {
     tabDraftIds.set(tabs[tabs.length - 1].id, draft.id);
   }
   if (isTauriRuntimeCheck()) void invoke("autosave_clear").catch(() => undefined);
-  setStatus("已恢复未保存草稿");
+  setStatus(t("已恢复未保存草稿"));
 }
 
 /** @lang zh-CN 丢弃全部草稿（经确认模态，不可逆）。 / @lang en Discard every draft (through the confirm modal; irreversible). */
 async function discardDrafts(): Promise<void> {
-  if (!(await showConfirmModal(`将丢弃 ${pendingDrafts.length} 份上次会话的未保存草稿，且无法撤销。确定丢弃？`))) return;
+  if (!(await showConfirmModal(tf("将丢弃 {count} 份上次会话的未保存草稿，且无法撤销。确定丢弃？", { count: pendingDrafts.length })))) return;
   pendingDrafts = [];
   renderDraftBanner();
   if (isTauriRuntimeCheck()) void invoke("autosave_clear").catch(() => undefined);
-  setStatus("已丢弃未保存草稿");
+  setStatus(t("已丢弃未保存草稿"));
 }
 
 /** @lang zh-CN 启动时加载待处理草稿并渲染提示条（F7 定案⑥）。 / @lang en Load pending drafts at startup and render the banner (F7 decision ⑥). */
@@ -3521,9 +3656,9 @@ async function openStartupDocuments(): Promise<boolean> {
     resetExplorerFor(state());
     await renderExplorerTree();
     persistSession();
-    setStatus(skipped > 0 ? `已打开 ${documents.length - skipped} 个传入文件；${skipped} 个因标签页上限被跳过` : documents.length > 1 ? `已通过系统文件入口打开 ${documents.length} 个文件` : "已通过系统文件入口打开");
+    setStatus(skipped > 0 ? tf("已打开 {opened} 个传入文件；{skipped} 个因标签页上限被跳过", { opened: documents.length - skipped, skipped }) : documents.length > 1 ? tf("已通过系统文件入口打开 {count} 个文件", { count: documents.length }) : t("已通过系统文件入口打开"));
     return true;
-  } catch (error) { setStatus(`启动文件打开失败：${formatError(error)}`); return false; }
+  } catch (error) { setStatus(tf("启动文件打开失败：{error}", { error: formatError(error) })); return false; }
 }
 
 // 中文：应用级菜单栏与工具栏（`W-hrt-P12` 定案方案二）——顶部结构为 Banner / 菜单栏 / 工具栏 / Tab 条。
@@ -3543,6 +3678,7 @@ renderAppToolbar();
 // English: Sidebar three modes (W-hrt-P14 F2) — render the mode strip, restore the persisted
 //       mode, and bind the switch and search-input events.
 renderSidebarModeStrip();
+applyShellLanguage();
 applySidebarMode();
 explorerModes.addEventListener("click", (event) => {
   // 中文：closest 取按钮（点击落在图标/文字子元素上也能命中）；dataset.mode 缺失时忽略。
@@ -3734,7 +3870,7 @@ if (isTauriRuntime) {
 
 void initializeEditor()
   .then(async () => {
-    if (!isTauriRuntime) { setStatus("浏览器兼容性验证模式"); return; }
+    if (!isTauriRuntime) { setStatus(t("浏览器兼容性验证模式")); return; }
     // 中文：启动顺序（W-hrt-P14 F5 定案①）——启动参数优先；无启动参数才恢复会话；最后提示草稿。
     // English: Startup order (W-hrt-P14 F5 decision ①) — startup arguments win; the session is
     //       restored only when none were supplied; drafts prompt last.
@@ -3746,4 +3882,4 @@ void initializeEditor()
     //          the settled shape right after startup).
     persistSession();
   })
-  .catch((error: unknown) => setStatus(`编辑器初始化失败：${formatError(error)}`));
+  .catch((error: unknown) => setStatus(tf("编辑器初始化失败：{error}", { error: formatError(error) })));
