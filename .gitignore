@@ -16,3 +16,4 @@ work-zone/
 
 # Local editor preferences; keep the existing local settings out of distributable sources.
 .vscode/settings.json
+.tmp-p15/
