@@ -1093,12 +1093,18 @@ function updateStatusCursor(): void {
   statusbarCursor.textContent = tf("行 {line} · 列 {column}", { line, column });
 }
 
-async function initializeEditor(): Promise<void> {
-  // 中文：字号选择器现在延迟到设置面板创建；编辑器初始化直接沿用持久化值（由 applyEditorFontSize 读取）。
-  // English: The size selector is now created lazily inside the settings panel; editor init simply
-  //          reuses the persisted value (read by applyEditorFontSize).
-  registerCompatibilityChecklistPlugin();
-  const instances = await hugerte.init({
+/**
+ * @lang zh-CN
+ * 构建编辑器初始化选项（W-hrt-P15 热切换改造）：抽成函数使**语言切换时可销毁重建编辑器实例**
+ * ——`language` 是 init 选项，无法运行时修改；重建期间保留当前文档内容与光标（调用方负责）。
+ * @lang en
+ * Build the editor init options (W-hrt-P15 hot-switch rework): extracted into a function so a
+ * **language switch can destroy and recreate the editor instance** — `language` is an init option
+ * and cannot be changed at runtime; the caller preserves the current document and caret across the
+ * rebuild.
+ */
+function buildEditorInitOptions(): Parameters<typeof hugerte.init>[0] {
+  return {
     target: editorTarget, height: "100%", menubar: false, promotion: false, branding: false, resize: false, convert_urls: false,
     // 中文：contextmenu_never_use_native（维护者 2026-11-12 反馈）——编辑 iframe 内永不弹出 WebView2
     //       原生右键菜单；HugeRTE 自带的上下文菜单（默认作用于链接/图片/表格等元素）正常弹出。
@@ -1108,12 +1114,14 @@ async function initializeEditor(): Promise<void> {
     //       default active on links/images/tables) still pops up. The shell area's default menu is
     //       handled by the document-level interception below.
     contextmenu_never_use_native: true,
-    // 中文：编辑器界面语言（W-hrt-P15）——按持久化语言条件传入（zh-Hans 语言包已通过副作用
-    //       导入注册；英文为内置缺省无需包）。language 是 init 选项，切换语言后重启生效。
-    // English: The editor UI language (W-hrt-P15) — passed conditionally on the persisted language
-    //       (the zh-Hans pack registers via the side-effect import; English is the built-in
-    //       default and needs no pack). language is an init option, so switching applies after a
-    //       restart.
+    // 中文：编辑器界面语言（W-hrt-P15）——按持久化语言传入（zh-Hans 语言包经副作用导入注册；
+    //       英文为内置缺省无需包）。`language` 是 init 选项，运行时不可改，故语言切换时由
+    //       `rebuildEditorForLanguage()` 销毁并重建实例（保留内容/光标/滚动）——用户无需重启。
+    // English: Editor UI language (W-hrt-P15) — passed from the persisted language (the zh-Hans
+    //       pack registers via the side-effect import; English is the built-in default and needs no
+    //       pack). `language` is an init option with no runtime setter, so a language switch calls
+    //       `rebuildEditorForLanguage()`, which destroys and recreates the instance (content, caret
+    //       and scroll preserved) — no restart needed.
     language: getLanguage() === "en" ? undefined : "zh-Hans",
     skin_url: "default", content_css: "default",
     // 中文：关闭 HugeRTE 内置状态栏（W-hrt-P14 F4）——其职责（字数统计）由应用级状态栏
@@ -1161,9 +1169,26 @@ async function initializeEditor(): Promise<void> {
         setStatus(t("已修改，尚未保存"));
       });
     }
-  });
-  editor = instances[0] ?? null;
-  if (!editor) throw new Error(t("HugeRTE 未能创建编辑器实例。"));
+  };
+}
+
+/**
+ * @lang zh-CN
+ * 编辑器初始化 / 重建的**唯一装配点**：初始化 HugeRTE 实例并接好全部后续监听（iframe 外点
+ * 关闭、滚动同步、字数、光标行列）。语言热切换时先 `remove()` 旧实例再调用本函数重建，
+ * 保证所有监听只挂一次、不重复累积。
+ * @lang en
+ * The **single wiring point** for editor init/rebuild: initializes the HugeRTE instance and attaches
+ * every follow-up listener (iframe outside-close, scroll sync, word count, cursor line-column). A
+ * language hot switch removes the old instance and calls this again, so listeners attach exactly
+ * once and never accumulate.
+ */
+async function createEditorInstance(): Promise<Editor> {
+  registerCompatibilityChecklistPlugin();
+  const instances = await hugerte.init(buildEditorInitOptions());
+  const created = instances[0] ?? null;
+  if (!created) throw new Error(t("HugeRTE 未能创建编辑器实例。"));
+  editor = created;
   // 中文：编辑 iframe 内的 mousedown 转发给活动浮层关闭器——iframe 是独立文档，外壳级外点监听
   //       收不到里面的点击；用户点击编辑区时浮动面板（历史/设置/面包屑下拉）必须关闭
   //       （2026-11-14 外点关闭修复的 iframe 缺口）。
@@ -1192,7 +1217,83 @@ async function initializeEditor(): Promise<void> {
   // English: Cursor line-column feeds the status bar (W-hrt-P14 F4) — NodeChange covers selection/
   //       node changes, keyup/click cover movement inside one node, SetContent covers the initial
   //       position after wholesale content swaps.
-  editor.on("NodeChange keyup click focus SetContent", updateStatusCursor);
+  created.on("NodeChange keyup click focus SetContent", updateStatusCursor);
+  return created;
+}
+
+/** @lang zh-CN 关闭已打开的设置面板（走面板自身关闭器，摘净监听）；无面板时为空操作。 / @lang en Close the settings panel if open (via the panel's own closer, detaching listeners); a no-op when absent. */
+function closeSettingsPanelIfOpen(): void {
+  const panel = document.querySelector<HTMLElement & { __close?: () => void }>(".settings-panel");
+  if (panel?.__close) panel.__close();
+  else panel?.remove();
+}
+
+/**
+ * @lang zh-CN
+ * **编辑器语言热切换**（用户反馈闭环 2026-11-18）：`language` 是 HugeRTE 的 init 选项、运行时
+ * 不可修改，因此切换界面语言时销毁并重建实例。为让用户"感觉不到重建"，重建前后保留：
+ * 完整文档内容（经 `readEditorContent()`，含 docectye/head 前缀后缀）、光标位置
+ * （`selection.getBookmark`）与滚动位置；同时重建后重新应用正文字号与源码框镜像。
+ * 失败时如实上报状态（不静默吞掉），并保持 `editor = null` 以便后续操作报错可见。
+ * @lang en
+ * **Editor language hot switch** (closing the loop on user feedback, 2026-11-18): `language` is a
+ * HugeRTE init option with no runtime setter, so switching the interface language destroys and
+ * recreates the instance. To make the rebuild invisible it preserves, across the swap: the full
+ * document content (via `readEditorContent()`, doctype/head prefix and suffix included), the caret
+ * (`selection.getBookmark`) and the scroll position; the body font size and source-textarea mirror
+ * are re-applied afterwards. Failures surface in the status line (never silently swallowed) and
+ * leave `editor = null` so later operations fail visibly.
+ */
+async function rebuildEditorForLanguage(): Promise<void> {
+  if (!editor) return;
+  /** 中文：显式类型标注——`editor` 是 `Editor | null`，直接赋值会让后续收窄成 never。 / English: Explicit type — `editor` is `Editor | null`; a bare copy would narrow to never below. */
+  const previousEditor: Editor = editor;
+  // 中文：先把最新内容与视图位置取出来——重建会丢弃旧实例的一切运行时状态。
+  // English: Capture the latest content and view state first — the rebuild discards every runtime
+  //          aspect of the old instance.
+  const content = readEditorContent();
+  let caretBookmark: unknown = null;
+  try { caretBookmark = previousEditor.selection.getBookmark(2, true); } catch { caretBookmark = null; }
+  const scrollTop = previousEditor.getDoc()?.scrollingElement?.scrollTop ?? 0;
+  // 中文：移除旧实例（同时摘掉其 DOM 与事件），再按当前语言重建。
+  // English: Remove the old instance (its DOM and events go with it), then recreate for the current
+  //       language.
+  try {
+    previousEditor.remove();
+  } catch (error) {
+    setStatus(tf("编辑器语言切换失败：{error}", { error: formatError(error) }));
+    return;
+  }
+  editor = null;
+  replaceActiveDocument({ ...state(), content });
+  try {
+    // 中文：重建结果取局部变量——模块级 `editor` 在 `await` 后会被 TS 判为 null（收窄）。
+    // English: Keep the rebuilt instance in a local — the module-level `editor` is narrowed to null
+    //          across the `await`.
+    const rebuilt: Editor = await createEditorInstance();
+    await applyDocumentToEditor(state());
+    // 中文：恢复光标与滚动——重建后用户视点不应跳回文档开头。
+    // English: Restore caret and scroll — the user's viewpoint must not jump back to the top.
+    if (caretBookmark) {
+      try { rebuilt.selection.moveToBookmark(caretBookmark as never); } catch { /* 书签失效时保持默认位置 */ }
+    }
+    const scrollingElement = rebuilt.getDoc()?.scrollingElement;
+    if (scrollingElement) scrollingElement.scrollTop = scrollTop;
+    applyEditorFontSize();
+  } catch (error) {
+    setStatus(tf("编辑器语言切换失败：{error}", { error: formatError(error) }));
+  }
+}
+
+/**
+ * @lang zh-CN
+ * 首次启动的编辑器初始化：创建实例 → 载入活动文档 → 应用正文字号。
+ * @lang en
+ * First-launch editor initialization: create the instance → load the active document → apply the
+ * body font size.
+ */
+async function initializeEditor(): Promise<void> {
+  await createEditorInstance();
   await replaceDocument(tabs[activeIndex].document);
   applyEditorFontSize();
 }
@@ -1780,10 +1881,28 @@ async function toggleSettingsPanel(): Promise<void> {
   }
   languageSelect.value = getLanguage();
   languageSelect.addEventListener("change", () => {
-    if (setUiLanguage(languageSelect.value === "en" ? "en" : "zh-Hans")) {
-      rebuildShellChrome();
-      setStatus(t("界面语言已切换（编辑器语言包在重启后生效）。"));
-    }
+    const nextLanguage = languageSelect.value === "en" ? "en" : "zh-Hans";
+    if (!setUiLanguage(nextLanguage)) return;
+    // 中文：闭环处理用户反馈（2026-11-18）——①**设置面板自身也要立刻变**：关闭并用新语言重开
+    //       面板（重开即重新构建全部文案），避免"切了语言但设置界面没变"；②**编辑器热切换**：
+    //       销毁并重建 HugeRTE 实例（`language` 是 init 选项，运行时不可改），保留当前文档内容、
+    //       光标位置与滚动位置。两条都在同一 handler 内完成，不留"重启才生效"的尾巴。
+    // English: Closes the loop on maintainer feedback (2026-11-18) — ① **the settings panel itself
+    //       must switch immediately**: close it and reopen in the new language (reopening rebuilds
+    //       all its copy), so "language switched but the panel did not" cannot happen; ② **hot-switch
+    //       the editor**: destroy and recreate the HugeRTE instance (`language` is an init option and
+    //       cannot change at runtime) while preserving the current document, caret and scroll.
+    //       Both happen in this handler — no "restart required" tail.
+    const reopenSettings = (): void => { void toggleSettingsPanel(); };
+    const floatingCloser = activeFloaterCloser;
+    rebuildShellChrome();
+    void rebuildEditorForLanguage().finally(() => {
+      // 中文：面板可能已被重开流程关闭；先确保关闭（走关闭器摘净监听）再重开。
+      if (floatingCloser) floatingCloser();
+      else closeSettingsPanelIfOpen();
+      setStatus(t("界面语言已切换"));
+      reopenSettings();
+    });
   });
   languageLabel.appendChild(languageSelect);
   appearanceRow.append(uiSizeLabel, fontSizeLabel, menubarLabel, languageLabel);
