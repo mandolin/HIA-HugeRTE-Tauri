@@ -32,7 +32,7 @@ import {
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
 import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, resolveRestoredActiveOrdinal, type DraftRecord, type SessionRecord } from "./session";
 import { getLanguage, setLanguage as setUiLanguage, t, tf } from "./ui/strings";
-import { applyFontStack, editorContentThemeCss, editorThemeCss, getFontStack, getThemeSetting, resolveTheme, setFontStack, setThemeSetting, THEMES, type ThemeDef } from "./ui/themes";
+import { applyFontStack, editorThemeCss, getFontStack, getThemeSetting, resolveTheme, setFontStack, setThemeSetting, THEMES, type ThemeDef } from "./ui/themes";
 import { createIcon, type IconName } from "./ui/icons";
 import { scanContentLineHits } from "./ui/sidebar-search";
 import "./styles.css";
@@ -1213,10 +1213,6 @@ async function createEditorInstance(): Promise<Editor> {
   editor.on("wordCountUpdate", (event: { wordCount: { words: number; characters: number } }) => {
     statusbarCount.textContent = tf("字符 {chars} · 词 {words}", { chars: event.wordCount.characters, words: event.wordCount.words });
   });
-  // 中文：编辑器重建后重新注入正文主题样式（W-hrt-P16——iframe 是新文档，主题样式需重挂）。
-  // English: Re-inject the content theme style after an editor rebuild (W-hrt-P16 — the iframe is
-  //       a fresh document, so the theme style must be re-attached).
-  applyIframeContentTheme();
   // 中文：光标行列接入状态栏（W-hrt-P14 F4）——NodeChange 覆盖选区/节点变化，keyup/click 覆盖
   //       同节点内移动，SetContent 覆盖内容整体换入后的初始定位。
   // English: Cursor line-column feeds the status bar (W-hrt-P14 F4) — NodeChange covers selection/
@@ -2804,36 +2800,39 @@ let sidebarMode: SidebarMode = (() => {
  * instance is never rebuilt, so switching is instant).
  */
 function applyThemeToDom(theme: ThemeDef): void {
-  // 中文：只设 data-theme 属性——token 值由 styles.css 的 [data-theme] 选择器接管
-  //       （不设内联样式，避免内联优先级高于 CSS 选择器导致探针/后续切换失效）。
-  // English: Only set the data-theme attribute — token values are owned by styles.css's
-  //       [data-theme] selectors (no inline styles, so the probe and later switches work).
-  // 中文：更新编辑器覆盖样式（同一套 token 生成编辑器覆盖 CSS）。
-  // English: Update the editor override stylesheet (generated from the same theme tokens).
+  // 中文：JS 直接设置根元素的 12 个基础 token 为内联样式——保证壳全部元素拿到主题色
+  //       （实测教训：只设 data-theme 属性依赖 CSS 选择器优先级在部分场景不生效——
+  //       2026-11-19 维护者反馈"壳没有变"）。
+  // English: Set the 12 base tokens as inline styles on the root element — this guarantees the
+  //       shell picks up the theme colours (measured lesson: relying on data-theme CSS selectors
+  //       alone failed in practice — 2026-11-19 maintainer feedback "shell didn't change").
+  const root = document.documentElement;
+  root.dataset.theme = theme.id;
+  const tokens = theme.tokens;
+  root.style.setProperty("--t-bg", tokens.bg);
+  root.style.setProperty("--t-bg2", tokens.bg2);
+  root.style.setProperty("--t-bg3", tokens.bg3);
+  root.style.setProperty("--t-fg", tokens.fg);
+  root.style.setProperty("--t-fg2", tokens.fg2);
+  root.style.setProperty("--t-fg3", tokens.fg3);
+  root.style.setProperty("--t-accent", tokens.accent);
+  root.style.setProperty("--t-accent-fg", tokens.bg2);
+  root.style.setProperty("--t-sel", tokens.sel);
+  root.style.setProperty("--t-bd", tokens.bd);
+  root.style.setProperty("--t-bd2", tokens.bd2);
+  root.style.setProperty("--t-banner", tokens.banner);
+  root.style.setProperty("--t-banner-fg", tokens.bannerFg);
+  // 中文：更新编辑器工具栏/菜单覆盖样式（同一套 token 生成覆盖 CSS）。
+  //       **只覆盖工具栏/菜单/边框**——iframe 内的文档正文样式不改（文档有自己的样式）。
+  // English: Update the editor toolbar/menu override stylesheet (generated from the same tokens).
+  //       **Only toolbar/menus/borders are overridden** — the iframe document's own styles are
+  //       never touched (documents carry their own styles).
   const override = document.getElementById("editor-theme-override") ?? document.createElement("style");
   override.id = "editor-theme-override";
   override.textContent = editorThemeCss(theme.tokens);
   if (!override.isConnected) document.head.appendChild(override);
-  // 中文：iframe 正文主题样式（编辑器重建后会重建 iframe，因此在监听器里也注入一次）。
-  // English: Theme style for the iframe body (the editor rebuild recreates the iframe, so inject
-  //          from the listener too).
-  applyIframeContentTheme();
 }
 
-/** @lang zh-CN 向编辑器 iframe 注入/更新正文主题样式（背景与文字跟随主题）。 / @lang en Inject/update the theme style for the editor iframe body (background and text follow the theme). */
-function applyIframeContentTheme(): void {
-  const theme = resolveTheme(getThemeSetting());
-  const iframe = document.querySelector<HTMLIFrameElement>("#hugerte-editor_ifr");
-  const doc = iframe?.contentDocument;
-  if (!doc) return;
-  let style = doc.getElementById("theme-content-style");
-  if (!style) {
-    style = doc.createElement("style");
-    style.id = "theme-content-style";
-    doc.head.appendChild(style);
-  }
-  style.textContent = editorContentThemeCss(theme.tokens);
-}
 
 /** @lang zh-CN 当前生效主题（解析 `system` 档位后的具体主题）。 / @lang en The currently effective theme (after resolving the `system` setting). */
 function currentTheme(): ThemeDef {
@@ -2848,7 +2847,6 @@ function applyThemeSetting(): void {
   media.addEventListener("change", () => {
     if (getThemeSetting() !== "system") return;
     applyThemeToDom(resolveTheme("system"));
-    applyIframeContentTheme();
   });
 }
 

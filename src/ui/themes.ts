@@ -140,26 +140,11 @@ export function editorThemeCss(tokens: ThemeTokens): string {
     `.tox .tox-tbtn--disabled, .tox .tox-tbtn--disabled:hover { color: ${tokens.fg3}; background-color: transparent; }`,
     `.tox .tox-tbtn--select, .tox .tox-tbtn--select:hover { background-color: ${tokens.sel}; color: ${tokens.fg}; }`,
     `.tox .tox-toolbar__primary { border-bottom: 1px solid ${tokens.bd2}; }`,
-    `.tox .tox-edit-area__iframe { background-color: ${tokens.bg}; border-color: ${tokens.bd2}; }`,
+    `.tox .tox-edit-area__iframe { border-color: ${tokens.bd2}; }`,
     `.tox .tox-statusbar { border-color: ${tokens.bd2}; }`
   ].join("\n");
 }
 
-/**
- * @lang zh-CN
- * 编辑器**正文**（iframe 内 body）的主题样式文本：背景/文字/标题/链接/表格边框跟随主题。
- * @lang en
- * Theme style text for the editor **content** (the iframe body): background/text/headings/links/
- * table borders follow the theme.
- */
-export function editorContentThemeCss(tokens: ThemeTokens): string {
-  return [
-    `body { background-color: ${tokens.bg}; color: ${tokens.fg}; }`,
-    `h1, h2, h3, h4, h5, h6 { color: ${tokens.fg}; }`,
-    `a { color: ${tokens.accent}; }`,
-    `table td, table th { border-color: ${tokens.bd}; }`
-  ].join("\n");
-}
 /** @lang zh-CN 字体栈持久化键（contract-freeze §5 增量键）。 / @lang en The font-stack persistence key (additive key in contract-freeze §5). */
 export const FONT_STACK_KEY = "hia-hugerte.font-stack";
 
