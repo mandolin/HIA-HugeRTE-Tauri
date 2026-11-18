@@ -133,15 +133,20 @@ export function editorThemeCss(tokens: ThemeTokens): string {
   return [
     `.tox, .tox .tox-editor-header, .tox .tox-toolbar-overlord, .tox .tox-toolbar__primary,`,
     `.tox .tox-toolbar__overflow, .tox .tox-sidebar, .tox .tox-view-wrap, .tox .tox-view-wrap__slot-container,`,
-    `.tox .tox-statusbar { background-color: ${tokens.bg2}; color: ${tokens.fg}; }`,
-    `.tox { border-color: ${tokens.bd2}; }`,
-    `.tox .tox-tbtn { color: ${tokens.fg}; }`,
-    `.tox .tox-tbtn:hover, .tox .tox-tbtn:focus { background-color: ${tokens.sel}; color: ${tokens.fg}; }`,
-    `.tox .tox-tbtn--disabled, .tox .tox-tbtn--disabled:hover { color: ${tokens.fg3}; background-color: transparent; }`,
-    `.tox .tox-tbtn--select, .tox .tox-tbtn--select:hover { background-color: ${tokens.sel}; color: ${tokens.fg}; }`,
-    `.tox .tox-toolbar__primary { border-bottom: 1px solid ${tokens.bd2}; }`,
-    `.tox .tox-edit-area__iframe { border-color: ${tokens.bd2}; }`,
-    `.tox .tox-statusbar { border-color: ${tokens.bd2}; }`
+    `.tox .tox-statusbar { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-tbtn { color: ${tokens.fg} !important; }`,
+    `.tox .tox-tbtn:hover, .tox .tox-tbtn:focus { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-tbtn--disabled, .tox .tox-tbtn--disabled:hover { color: ${tokens.fg3} !important; background-color: transparent !important; }`,
+    `.tox .tox-tbtn--select, .tox .tox-tbtn--select:hover { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-toolbar__primary { border-bottom: 1px solid ${tokens.bd2} !important; }`,
+    `.tox .tox-edit-area__iframe { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-statusbar { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-menu { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-menu .tox-menu-item { color: ${tokens.fg} !important; }`,
+    `.tox .tox-collection__item { color: ${tokens.fg} !important; }`,
+    `.tox .tox-collection__item--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-dialog, .tox .tox-dialog__body, .tox .tox-dialog__footer { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`
   ].join("\n");
 }
 
