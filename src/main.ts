@@ -32,6 +32,7 @@ import {
 import { registerCompatibilityChecklistPlugin } from "./editor/hugerte-compatibility";
 import { buildSessionRecord, draftTitle, nextDraftId, normalizeSessionRecord, resolveRestoredActiveOrdinal, type DraftRecord, type SessionRecord } from "./session";
 import { getLanguage, setLanguage as setUiLanguage, t, tf } from "./ui/strings";
+import { applyFontStack, editorContentThemeCss, editorThemeCss, getFontStack, getThemeSetting, resolveTheme, setFontStack, setThemeSetting, THEMES, type ThemeDef } from "./ui/themes";
 import { createIcon, type IconName } from "./ui/icons";
 import { scanContentLineHits } from "./ui/sidebar-search";
 import "./styles.css";
@@ -1212,6 +1213,10 @@ async function createEditorInstance(): Promise<Editor> {
   editor.on("wordCountUpdate", (event: { wordCount: { words: number; characters: number } }) => {
     statusbarCount.textContent = tf("字符 {chars} · 词 {words}", { chars: event.wordCount.characters, words: event.wordCount.words });
   });
+  // 中文：编辑器重建后重新注入正文主题样式（W-hrt-P16——iframe 是新文档，主题样式需重挂）。
+  // English: Re-inject the content theme style after an editor rebuild (W-hrt-P16 — the iframe is
+  //       a fresh document, so the theme style must be re-attached).
+  applyIframeContentTheme();
   // 中文：光标行列接入状态栏（W-hrt-P14 F4）——NodeChange 覆盖选区/节点变化，keyup/click 覆盖
   //       同节点内移动，SetContent 覆盖内容整体换入后的初始定位。
   // English: Cursor line-column feeds the status bar (W-hrt-P14 F4) — NodeChange covers selection/
@@ -1867,6 +1872,8 @@ async function toggleSettingsPanel(): Promise<void> {
   menubarSelect.value = menubarMode;
   menubarSelect.addEventListener("change", () => setMenubarMode(menubarSelect.value as MenubarMode));
   menubarLabel.appendChild(menubarSelect);
+  // 中文：字体栈（W-hrt-P16）——在语言切换重建后重新应用。
+  applyFontStack();
   // 中文：界面语言（W-hrt-P15）——切换即时重建壳文案；编辑器语言包随重启生效（init 选项）。
   const languageLabel = document.createElement("label");
   languageLabel.className = "settings-panel__state";
@@ -1905,6 +1912,49 @@ async function toggleSettingsPanel(): Promise<void> {
     });
   });
   languageLabel.appendChild(languageSelect);
+
+  // 中文：主题选择项（W-hrt-P16）——18 套固定主题 + 跟随系统；切换即时生效（壳 CSS 变量 +
+  //       编辑器覆盖样式表同步更新，无需重建编辑器实例）。
+  const themeLabel = document.createElement("label");
+  themeLabel.className = "settings-panel__state";
+  themeLabel.textContent = t("主题 ");
+  const themeSelect = document.createElement("select");
+  themeSelect.id = "ui-theme";
+  for (const option of [["system", t("跟随系统")], ...THEMES.map((theme) => [theme.id, theme.label] as const)] as const) {
+    const optionElement = document.createElement("option");
+    optionElement.value = option[0];
+    optionElement.textContent = option[1];
+    themeSelect.appendChild(optionElement);
+  }
+  themeSelect.value = getThemeSetting();
+  themeSelect.addEventListener("change", () => {
+    setThemeSetting(themeSelect.value);
+    applyThemeSetting();
+    rebuildShellChrome();
+    setStatus(t("主题已切换"));
+  });
+  themeLabel.appendChild(themeSelect);
+
+  // 中文：字体栈两档（W-hrt-P16）——系统默认 / HIA 字体栈；经 --font-ui 变量即时生效。
+  const fontLabel = document.createElement("label");
+  fontLabel.className = "settings-panel__state";
+  fontLabel.textContent = t("字体 ");
+  const fontSelect = document.createElement("select");
+  fontSelect.id = "ui-font-stack";
+  for (const option of [["system", t("系统默认")], ["hia", t("HIA 字体栈")]] as const) {
+    const optionElement = document.createElement("option");
+    optionElement.value = option[0];
+    optionElement.textContent = option[1];
+    fontSelect.appendChild(optionElement);
+  }
+  fontSelect.value = getFontStack();
+  fontSelect.addEventListener("change", () => {
+    setFontStack(fontSelect.value === "hia" ? "hia" : "system");
+    applyFontStack();
+    setStatus(t("字体已切换"));
+  });
+  fontLabel.appendChild(fontSelect);
+  appearanceRow.append(uiSizeLabel, fontSizeLabel, menubarLabel, languageLabel, themeLabel, fontLabel);
   appearanceRow.append(uiSizeLabel, fontSizeLabel, menubarLabel, languageLabel);
   appearanceSection.append(appearanceTitle, appearanceRow);
   panel.appendChild(appearanceSection);
@@ -2740,6 +2790,68 @@ let sidebarMode: SidebarMode = (() => {
  * language switch. Dynamic copy (menus/toolbar/tab strip/status bar/panels) is refreshed by
  * their re-render functions, invoked together from rebuildShellChrome.
  */
+/**
+ * @lang zh-CN
+ * 把当前主题应用到 DOM（W-hrt-P16）：写入 12 个基础 token（`--t-*`）到根元素、设置
+ * `data-theme` 属性（驱动 CSS 里的特殊覆盖），并更新**编辑器覆盖样式表**（HugeRTE 皮肤
+ * 无 CSS 变量，故用同一套 token 生成覆盖文本注入 `<style>`；主题切换时只更新内容——
+ * 编辑器实例不重建，切换即时生效）。
+ * @lang en
+ * Apply the current theme to the DOM (W-hrt-P16): writes the 12 base tokens (`--t-*`) onto the
+ * root element, sets the `data-theme` attribute (driving special CSS overrides), and updates the
+ * **editor override stylesheet** (the HugeRTE skin has no CSS variables, so the same tokens
+ * generate override text injected into a `<style>`; on switch only the text updates — the editor
+ * instance is never rebuilt, so switching is instant).
+ */
+function applyThemeToDom(theme: ThemeDef): void {
+  // 中文：只设 data-theme 属性——token 值由 styles.css 的 [data-theme] 选择器接管
+  //       （不设内联样式，避免内联优先级高于 CSS 选择器导致探针/后续切换失效）。
+  // English: Only set the data-theme attribute — token values are owned by styles.css's
+  //       [data-theme] selectors (no inline styles, so the probe and later switches work).
+  // 中文：更新编辑器覆盖样式（同一套 token 生成编辑器覆盖 CSS）。
+  // English: Update the editor override stylesheet (generated from the same theme tokens).
+  const override = document.getElementById("editor-theme-override") ?? document.createElement("style");
+  override.id = "editor-theme-override";
+  override.textContent = editorThemeCss(theme.tokens);
+  if (!override.isConnected) document.head.appendChild(override);
+  // 中文：iframe 正文主题样式（编辑器重建后会重建 iframe，因此在监听器里也注入一次）。
+  // English: Theme style for the iframe body (the editor rebuild recreates the iframe, so inject
+  //          from the listener too).
+  applyIframeContentTheme();
+}
+
+/** @lang zh-CN 向编辑器 iframe 注入/更新正文主题样式（背景与文字跟随主题）。 / @lang en Inject/update the theme style for the editor iframe body (background and text follow the theme). */
+function applyIframeContentTheme(): void {
+  const theme = resolveTheme(getThemeSetting());
+  const iframe = document.querySelector<HTMLIFrameElement>("#hugerte-editor_ifr");
+  const doc = iframe?.contentDocument;
+  if (!doc) return;
+  let style = doc.getElementById("theme-content-style");
+  if (!style) {
+    style = doc.createElement("style");
+    style.id = "theme-content-style";
+    doc.head.appendChild(style);
+  }
+  style.textContent = editorContentThemeCss(theme.tokens);
+}
+
+/** @lang zh-CN 当前生效主题（解析 `system` 档位后的具体主题）。 / @lang en The currently effective theme (after resolving the `system` setting). */
+function currentTheme(): ThemeDef {
+  return resolveTheme(getThemeSetting());
+}
+
+/** @lang zh-CN 应用当前主题档位并登记系统主题变化监听（跟随系统档位实时跟随）。 / @lang en Apply the current theme setting and register a system-theme change listener (the system setting follows live). */
+function applyThemeSetting(): void {
+  const theme = currentTheme();
+  applyThemeToDom(theme);
+  const media = matchMedia("(prefers-color-scheme: dark)");
+  media.addEventListener("change", () => {
+    if (getThemeSetting() !== "system") return;
+    applyThemeToDom(resolveTheme("system"));
+    applyIframeContentTheme();
+  });
+}
+
 function applyShellLanguage(): void {
   // 中文：源码栏标题与同步滚动文案。
   const sourceTitle = document.querySelector(".source-pane__title");
@@ -3798,6 +3910,7 @@ renderAppToolbar();
 //       mode, and bind the switch and search-input events.
 renderSidebarModeStrip();
 applyShellLanguage();
+applyThemeSetting();
 applySidebarMode();
 explorerModes.addEventListener("click", (event) => {
   // 中文：closest 取按钮（点击落在图标/文字子元素上也能命中）；dataset.mode 缺失时忽略。
