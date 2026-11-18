@@ -146,7 +146,28 @@ export function editorThemeCss(tokens: ThemeTokens): string {
     `.tox .tox-menu .tox-menu-item { color: ${tokens.fg} !important; }`,
     `.tox .tox-collection__item { color: ${tokens.fg} !important; }`,
     `.tox .tox-collection__item--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
-    `.tox .tox-dialog, .tox .tox-dialog__body, .tox .tox-dialog__footer { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`
+    `.tox .tox-dialog, .tox .tox-dialog__body, .tox .tox-dialog__footer { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-toolbar__overflow .tox-toolbar { background-color: transparent !important; }`,
+    `.tox .tox-pop { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-pop__dialog { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-dropzone { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-insert-table-picker { background-color: ${tokens.bg2} !important; }`,
+    `.tox .tox-color-picker-container { background-color: ${tokens.bg2} !important; }`,
+    `.tox .tox-listboxfield .tox-listbox--select { color: ${tokens.fg} !important; }`,
+    `.tox .tox-selectfield select { color: ${tokens.fg} !important; }`,
+    `.tox .tox-textfield, .tox .tox-textarea { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-search-dialog { background-color: ${tokens.bg2} !important; }`,
+    `.tox .tox-menu .tox-collection__item--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-block-wrap { color: ${tokens.fg} !important; }`,
+    `.tox .tox-bubble { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-notification { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-dialog__body-content { color: ${tokens.fg} !important; }`,
+    `.tox .tox-dialog__header { color: ${tokens.fg} !important; }`,
+    `.tox .tox-dialog__title { color: ${tokens.fg} !important; }`,
+    `.tox .tox-button { background-color: ${tokens.bg3} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-button--secondary { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-input-group { color: ${tokens.fg} !important; }`,
+    `.tox .tox-label { color: ${tokens.fg2} !important; }`
   ].join("\n");
 }
 
