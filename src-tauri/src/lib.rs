@@ -2,8 +2,14 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
 };
+
+/// 中文：Windows 专有的进程创建标志扩展（`creation_flags`）。
+/// English: Windows-only process-creation-flags extension (`creation_flags`).
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -845,8 +851,35 @@ fn association_unregister_operations() -> Vec<Vec<String>> {
 /// 中文：执行一条 `reg.exe` 命令；失败时返回带命令上下文的错误（不吞错）。
 /// English: Run one `reg.exe` command; on failure return an error carrying the command context
 /// (never swallowed).
+/// 中文：Windows「无控制台窗口」进程创建标志（`CREATE_NO_WINDOW`）。GUI 应用自身没有控制台，
+/// 但子进程（reg.exe / cmd.exe）默认会**新建一个控制台窗口**并短暂闪现——用户看到的就是设置
+/// 面板打开时"闪一下黑窗"（2026-11-18 维护者反馈）。给所有子进程加本标志即可彻底消除。
+/// English: The Windows "no console window" process-creation flag (`CREATE_NO_WINDOW`). A GUI app
+/// has no console of its own, but child processes (reg.exe / cmd.exe) create a **new console
+/// window** by default and it flashes briefly — exactly the "black window flicker" the maintainer
+/// reported when the settings panel opens (2026-11-18). Adding this flag to every child process
+/// removes it entirely.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// 中文：构造不弹控制台窗口的子进程命令（非 Windows 平台为普通构造，无此问题）。
+/// English: Build a child-process command that never shows a console window (a plain constructor on
+/// non-Windows platforms, where the issue does not exist).
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new(program);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new(program)
+    }
+}
+
 fn run_reg(arguments: &[String]) -> Result<(), String> {
-    let output = std::process::Command::new(reg_exe_path())
+    let output = hidden_command(&reg_exe_path())
         .args(arguments)
         .output()
         .map_err(|error| format!("[registry.command] 无法执行 reg.exe：{error}"))?;
@@ -865,7 +898,7 @@ fn run_reg(arguments: &[String]) -> Result<(), String> {
 /// English: Query whether the app is currently registered (read the command under `Applications`
 /// and compare it with the current path).
 fn association_is_registered(exe: &Path) -> bool {
-    let output = std::process::Command::new(reg_exe_path())
+    let output = hidden_command(&reg_exe_path())
         .args(["query", &association_command_key(), "/ve"])
         .output();
     let Ok(output) = output else {
@@ -978,7 +1011,7 @@ fn app_version_info() -> AppVersionInfo {
 /// link" from becoming a general-purpose capability surface.
 #[tauri::command]
 fn open_releases_page() -> Result<String, String> {
-    let status = std::process::Command::new("cmd")
+    let status = hidden_command("cmd")
         .args(["/C", "start", "", RELEASES_PAGE_URL])
         .status()
         .map_err(|error| format!("[shell.browser] 无法调用系统浏览器：{error}"))?;
@@ -995,7 +1028,7 @@ fn open_releases_page() -> Result<String, String> {
 /// (ADR-0001 revision item 1). Fixed URI; the frontend cannot pass an arbitrary target.
 #[tauri::command]
 fn open_default_apps_settings() -> Result<(), String> {
-    let status = std::process::Command::new("cmd")
+    let status = hidden_command("cmd")
         .args(["/C", "start", "ms-settings:defaultapps"])
         .status()
         .map_err(|error| format!("[shell.settings] 无法打开系统设置：{error}"))?;
