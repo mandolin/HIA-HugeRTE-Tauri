@@ -2822,6 +2822,24 @@ function applyThemeToDom(theme: ThemeDef): void {
   root.style.setProperty("--t-bd2", tokens.bd2);
   root.style.setProperty("--t-banner", tokens.banner);
   root.style.setProperty("--t-banner-fg", tokens.bannerFg);
+  // 中文：暗色主题的补充覆盖（--c-danger / --c-draft-bg / --c-mark-bg 需在暗底下取不同色值）。
+  // English: Dark-theme-specific overrides for danger/draft/mark colours (these need different
+  //       values on a dark background).
+  if (theme.dark) {
+    root.style.setProperty("--c-danger", "#e05c74");
+    root.style.setProperty("--c-danger-strong", "#c24558");
+    root.style.setProperty("--c-success", "#3fb377");
+    root.style.setProperty("--c-draft-bg", `color-mix(in srgb, #fff8e6 8%, ${tokens.bg})`);
+    root.style.setProperty("--c-draft-border", `color-mix(in srgb, #e5c46a 45%, ${tokens.bg})`);
+    root.style.setProperty("--c-mark-bg", `color-mix(in srgb, #ffe9a8 28%, ${tokens.bg})`);
+  } else {
+    root.style.removeProperty("--c-danger");
+    root.style.removeProperty("--c-danger-strong");
+    root.style.removeProperty("--c-success");
+    root.style.removeProperty("--c-draft-bg");
+    root.style.removeProperty("--c-draft-border");
+    root.style.removeProperty("--c-mark-bg");
+  }
   // 中文：更新编辑器工具栏/菜单覆盖样式（同一套 token 生成覆盖 CSS）。
   //       **只覆盖工具栏/菜单/边框**——iframe 内的文档正文样式不改（文档有自己的样式）。
   // English: Update the editor toolbar/menu override stylesheet (generated from the same tokens).

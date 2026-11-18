@@ -54,15 +54,6 @@ html { font-size: calc(16px * var(--app-ui-font-scale, 1)); }
   --c-drop-fg: var(--c-accent);
 }
 /* 深色主题下草稿条/高亮用暗色变体（color-mix 随底色自动变深，这里显式覆盖保证可读） */
-[data-theme="dark"], [data-theme="github-dark"], [data-theme="solarized-dark"], [data-theme="nord"],
-[data-theme="dracula"], [data-theme="one-dark"], [data-theme="monokai"], [data-theme="dimmed"] {
-  --c-danger: #e05c74;
-  --c-danger-strong: #c24558;
-  --c-success: #3fb377;
-  --c-draft-bg: color-mix(in srgb, #fff8e6 8%, var(--t-bg));
-  --c-draft-border: color-mix(in srgb, #e5c46a 45%, var(--t-bg));
-  --c-mark-bg: color-mix(in srgb, #ffe9a8 28%, var(--t-bg));
-}
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 720px; height: 100%; margin: 0; }
 button, select { font: inherit; }
@@ -503,138 +494,19 @@ body.explorer-resizing { cursor: col-resize; user-select: none; }
 /* ─── 18 套主题的 token 覆盖（W-hrt-P16；色值取自上游官方调色板）───
    Token overrides for the 18 themes (W-hrt-P16; colours from the upstream official palettes). */
 /* dark */
-[data-theme="dark"] {
-  --t-bg: #1e1e1e; --t-bg2: #252526; --t-bg3: #2d2d30;
-  --t-fg: #d4d4d4; --t-fg2: #a8a8a8; --t-fg3: #808080;
-  --t-accent: #4daafc; --t-accent-fg: var(--t-bg2); --t-sel: #264f78;
-  --t-bd: #3c3c3c; --t-bd2: #333333;
-  --t-banner: #2d2d30; --t-banner-fg: #d4d4d4;
-}
 /* github-dark */
-[data-theme="github-dark"] {
-  --t-bg: #0d1117; --t-bg2: #161b22; --t-bg3: #21262d;
-  --t-fg: #e6edf3; --t-fg2: #9198a1; --t-fg3: #6e7681;
-  --t-accent: #4493f8; --t-accent-fg: var(--t-bg2); --t-sel: #1f3a5f;
-  --t-bd: #30363d; --t-bd2: #21262d;
-  --t-banner: #161b22; --t-banner-fg: #e6edf3;
-}
 /* solarized-dark */
-[data-theme="solarized-dark"] {
-  --t-bg: #002b36; --t-bg2: #073642; --t-bg3: #0b4453;
-  --t-fg: #93a1a1; --t-fg2: #839496; --t-fg3: #657b83;
-  --t-accent: #4aa8de; --t-accent-fg: var(--t-bg2); --t-sel: #0d5064;
-  --t-bd: #0b4453; --t-bd2: #073642;
-  --t-banner: #073642; --t-banner-fg: #93a1a1;
-}
 /* nord */
-[data-theme="nord"] {
-  --t-bg: #2e3440; --t-bg2: #343b48; --t-bg3: #3b4252;
-  --t-fg: #eceff4; --t-fg2: #d8dee9; --t-fg3: #8f9bab;
-  --t-accent: #88c0d0; --t-accent-fg: var(--t-bg2); --t-sel: #434c5e;
-  --t-bd: #434c5e; --t-bd2: #3b4252;
-  --t-banner: #3b4252; --t-banner-fg: #eceff4;
-}
 /* dracula */
-[data-theme="dracula"] {
-  --t-bg: #282a36; --t-bg2: #2f3140; --t-bg3: #363849;
-  --t-fg: #f8f8f2; --t-fg2: #c8c8d0; --t-fg3: #9b9bac;
-  --t-accent: #bd93f9; --t-accent-fg: var(--t-bg2); --t-sel: #44475a;
-  --t-bd: #44475a; --t-bd2: #3a3c4d;
-  --t-banner: #44475a; --t-banner-fg: #f8f8f2;
-}
 /* one-dark */
-[data-theme="one-dark"] {
-  --t-bg: #282c34; --t-bg2: #2f333d; --t-bg3: #353b45;
-  --t-fg: #abb2bf; --t-fg2: #8b929e; --t-fg3: #6b727e;
-  --t-accent: #61afef; --t-accent-fg: var(--t-bg2); --t-sel: #3e4451;
-  --t-bd: #3e4451; --t-bd2: #353b45;
-  --t-banner: #21252b; --t-banner-fg: #abb2bf;
-}
 /* monokai */
-[data-theme="monokai"] {
-  --t-bg: #272822; --t-bg2: #2e2f28; --t-bg3: #3a3b32;
-  --t-fg: #f8f8f2; --t-fg2: #c5c5bd; --t-fg3: #96968e;
-  --t-accent: #f56b8b; --t-accent-fg: var(--t-bg2); --t-sel: #49483e;
-  --t-bd: #49483e; --t-bd2: #3a3b32;
-  --t-banner: #3a3b32; --t-banner-fg: #f8f8f2;
-}
 /* dimmed */
-[data-theme="dimmed"] {
-  --t-bg: #22272e; --t-bg2: #2d333b; --t-bg3: #373e47;
-  --t-fg: #adbac7; --t-fg2: #909dab; --t-fg3: #768390;
-  --t-accent: #539bf5; --t-accent-fg: var(--t-bg2); --t-sel: #2d4a6b;
-  --t-bd: #444c56; --t-bd2: #373e47;
-  --t-banner: #2d333b; --t-banner-fg: #adbac7;
-}
 /* github-light */
-[data-theme="github-light"] {
-  --t-bg: #ffffff; --t-bg2: #f6f8fa; --t-bg3: #eaeef2;
-  --t-fg: #1f2328; --t-fg2: #59636e; --t-fg3: #818b98;
-  --t-accent: #0969da; --t-accent-fg: var(--t-bg2); --t-sel: #ddf4ff;
-  --t-bd: #d1d9e0; --t-bd2: #e6eaef;
-  --t-banner: #24292f; --t-banner-fg: #ffffff;
-}
 /* solarized-light */
-[data-theme="solarized-light"] {
-  --t-bg: #fdf6e3; --t-bg2: #fffaf0; --t-bg3: #eee8d5;
-  --t-fg: #586e75; --t-fg2: #657b83; --t-fg3: #93a1a1;
-  --t-accent: #1f6fa8; --t-accent-fg: var(--t-bg2); --t-sel: #eee8d5;
-  --t-bd: #d8cfae; --t-bd2: #e6dcc0;
-  --t-banner: #eee8d5; --t-banner-fg: #586e75;
-}
 /* one-light */
-[data-theme="one-light"] {
-  --t-bg: #fafafa; --t-bg2: #f0f0f1; --t-bg3: #e5e5e6;
-  --t-fg: #383a42; --t-fg2: #696c77; --t-fg3: #a0a1a7;
-  --t-accent: #1a5fd0; --t-accent-fg: var(--t-bg2); --t-sel: #dbe6fb;
-  --t-bd: #c9c9ca; --t-bd2: #dcdcdd;
-  --t-banner: #383a42; --t-banner-fg: #fafafa;
-}
 /* gruvbox-light */
-[data-theme="gruvbox-light"] {
-  --t-bg: #fbf1c7; --t-bg2: #f2e5bc; --t-bg3: #ebdbb2;
-  --t-fg: #3c3836; --t-fg2: #504945; --t-fg3: #928374;
-  --t-accent: #af3a03; --t-accent-fg: var(--t-bg2); --t-sel: #f0d9a8;
-  --t-bd: #d5c4a1; --t-bd2: #e0cfa8;
-  --t-banner: #3c3836; --t-banner-fg: #fbf1c7;
-}
 /* latte */
-[data-theme="latte"] {
-  --t-bg: #eff1f5; --t-bg2: #e6e9ef; --t-bg3: #dce0e8;
-  --t-fg: #4c4f69; --t-fg2: #6c6f85; --t-fg3: #9ca0b0;
-  --t-accent: #1660d8; --t-accent-fg: var(--t-bg2); --t-sel: #ccd8f5;
-  --t-bd: #ccd0da; --t-bd2: #dce0e8;
-  --t-banner: #4c4f69; --t-banner-fg: #eff1f5;
-}
 /* rose-dawn */
-[data-theme="rose-dawn"] {
-  --t-bg: #faf4ed; --t-bg2: #f2e9e1; --t-bg3: #f4ede8;
-  --t-fg: #575279; --t-fg2: #797593; --t-fg3: #9893a5;
-  --t-accent: #286983; --t-accent-fg: var(--t-bg2); --t-sel: #e4dfe8;
-  --t-bd: #dfdad9; --t-bd2: #f0e9e3;
-  --t-banner: #575279; --t-banner-fg: #faf4ed;
-}
 /* quiet */
-[data-theme="quiet"] {
-  --t-bg: #f5f5f5; --t-bg2: #ececec; --t-bg3: #e0e0e0;
-  --t-fg: #333333; --t-fg2: #5a5a5a; --t-fg3: #999999;
-  --t-accent: #7a3e9d; --t-accent-fg: var(--t-bg2); --t-sel: #e6dcf0;
-  --t-bd: #cfcfcf; --t-bd2: #dedede;
-  --t-banner: #333333; --t-banner-fg: #f5f5f5;
-}
 /* tokyo-day */
-[data-theme="tokyo-day"] {
-  --t-bg: #e1e2e7; --t-bg2: #d7d8e3; --t-bg3: #cdd0dd;
-  --t-fg: #3760bf; --t-fg2: #6172b0; --t-fg3: #8990b8;
-  --t-accent: #1a5cbf; --t-accent-fg: var(--t-bg2); --t-sel: #c3d0ee;
-  --t-bd: #b8bcd0; --t-bd2: #cdd0dd;
-  --t-banner: #3760bf; --t-banner-fg: #e1e2e7;
-}
 /* ayu-light */
-[data-theme="ayu-light"] {
-  --t-bg: #fafafa; --t-bg2: #f0f0f0; --t-bg3: #e6e6e6;
-  --t-fg: #5c6166; --t-fg2: #787b80; --t-fg3: #a0a3a8;
-  --t-accent: #b3541a; --t-accent-fg: var(--t-bg2); --t-sel: #f5e0d0;
-  --t-bd: #c8c8c8; --t-bd2: #dedede;
-  --t-banner: #5c6166; --t-banner-fg: #fafafa;
-}
