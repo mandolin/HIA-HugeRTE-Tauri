@@ -2,6 +2,17 @@
 
 All notable public changes will be documented in this file.
 
+## v1.2.0 - 2026-11-19
+
+Adds interface internationalisation and a full colour-theme system.
+
+- Added **runtime Chinese / English switching** (Settings → Language). Every shell surface — menu bar, toolbar, tab strip, side panel, status bar, settings panel, dialogs and status messages — updates immediately. The editor's own toolbar is rebuilt in the chosen language while preserving the current document, caret position and scroll offset; no restart is needed.
+- Added **18 built-in colour themes** (Settings → Theme): ten light (Light, GitHub Light, Solarized Light, One Light, Gruvbox Light, Catppuccin Latte, Rosé Pine Dawn, Quiet Light, Tokyo Night Day, Ayu Light) and eight dark (Dark · VS Code, GitHub Dark, Solarized Dark, Nord, Dracula, One Dark, Monokai and Dimmed), plus **Follow system**, which tracks the Windows light/dark setting and updates live when that setting changes.
+- The theme applies consistently to the application shell and to the editor's own chrome — toolbar, overflow drawer, split-button dropdowns, format menus, context menu, dialogs, popovers, table grid picker, colour picker, form fields and their focus/disabled states — including icon glyphs, which follow the themed text colour.
+- **The edited document is never themed.** Theme colours never reach the document's own styles or background; the editing area shows exactly the document's own HTML and CSS.
+- Added a **font-stack choice** (Settings → Font): the OS default stack or the HIA open-source stack, applied to both the shell and the editor independently of the theme.
+- Fixed the banner using the theme's accent colour instead of its dedicated banner colour, which made several light themes look unchanged after switching.
+
 ## v1.0.0 - 2026-11-18
 
 The `1.0.0` line freezes the public contracts: document format, keyboard shortcuts, the editor output contract, on-disk data files and interface-state keys are documented in [docs/contract-freeze.md](docs/contract-freeze.md) and guarded by contract tests. From this line onward, changing a frozen contract requires a major version and a migration note.

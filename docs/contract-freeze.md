@@ -80,8 +80,10 @@ Interface preferences persist in the WebView profile (`localStorage`) under thes
 | `hia-hugerte.session-restore` | Session restore toggle |
 | `hia-hugerte.autosave` | Autosave-drafts toggle |
 | `hia-hugerte.language` | Interface language (`zh-Hans` default / `en`) |
+| `hia-hugerte.theme` | Colour theme (`system` default, or one of the built-in theme ids) |
+| `hia-hugerte.font-stack` | Font stack (`system` default / `hia`) |
 
-**Evidence**: the read/write sites are centralised in `src/main.ts`; the constants are asserted by the browser structure probe described in the release evidence.
+**Evidence**: the read/write sites are centralised in `src/main.ts` and `src/ui/themes.ts`; the constants are asserted by the browser structure probe described in the release evidence and by `src/contract-freeze.test.ts`.
 
 ## 6. Not contracted
 

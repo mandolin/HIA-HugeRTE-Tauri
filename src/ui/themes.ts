@@ -57,7 +57,18 @@ export const THEMES: ReadonlyArray<ThemeDef> = [
   { id: "github-dark", label: "GitHub 深色", labelEn: "GitHub Dark", dark: true,
     tokens: { bg: "#0d1117", bg2: "#161b22", bg3: "#21262d", fg: "#e6edf3", fg2: "#9198a1", fg3: "#6e7681", accent: "#4493f8", sel: "#1f3a5f", bd: "#30363d", bd2: "#21262d", banner: "#161b22", bannerFg: "#e6edf3" } },
   { id: "solarized-light", label: "Solarized 浅色", labelEn: "Solarized Light", dark: false,
-    tokens: { bg: "#fdf6e3", bg2: "#fffaf0", bg3: "#eee8d5", fg: "#586e75", fg2: "#657b83", fg3: "#93a1a1", accent: "#1f6fa8", sel: "#eee8d5", bd: "#d8cfae", bd2: "#e6dcc0", banner: "#eee8d5", bannerFg: "#586e75" } },
+    // 中文：2026-11-19 修正——旧值 bg2 #fffaf0 近乎纯白，整壳与默认浅色肉眼无法区分
+    //       （维护者三次反馈"壳没有变"的最终感知根因）。现按 Solarized 正典色阶：
+    //       页面 base2 #fdf6e3、表面 base3 #eee8d5（明确的奶油色）、软层 #e3dcc3；
+    //       Banner 用 base01 #586e75 灰青 + 奶油前景，与其他浅色主题的深 Banner 一致，
+    //       一眼可辨。
+    // English: 2026-11-19 correction — the old bg2 #fffaf0 was near-white, making the whole
+    //       shell visually indistinguishable from the default light theme (the perceptual root
+    //       cause behind three "shell didn't change" reports). Now follows the canonical
+    //       Solarized ramp: page base2 #fdf6e3, surface base3 #eee8d5 (clearly cream), soft
+    //       #e3dcc3; the banner uses base01 #586e75 slate-teal with a cream foreground, matching
+    //       the dark banners of the other light themes so the theme reads at a glance.
+    tokens: { bg: "#fdf6e3", bg2: "#eee8d5", bg3: "#e3dcc3", fg: "#586e75", fg2: "#657b83", fg3: "#93a1a1", accent: "#1f6fa8", sel: "#e3dcc3", bd: "#d8cfae", bd2: "#e6dcc0", banner: "#586e75", bannerFg: "#fdf6e3" } },
   { id: "solarized-dark", label: "Solarized 深色", labelEn: "Solarized Dark", dark: true,
     tokens: { bg: "#002b36", bg2: "#073642", bg3: "#0b4453", fg: "#93a1a1", fg2: "#839496", fg3: "#657b83", accent: "#4aa8de", sel: "#0d5064", bd: "#0b4453", bd2: "#073642", banner: "#073642", bannerFg: "#93a1a1" } },
   { id: "nord", label: "Nord", labelEn: "Nord", dark: true,
@@ -135,8 +146,37 @@ export function editorThemeCss(tokens: ThemeTokens): string {
     `.tox .tox-toolbar__overflow, .tox .tox-sidebar, .tox .tox-view-wrap, .tox .tox-view-wrap__slot-container,`,
     `.tox .tox-statusbar { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
     `.tox { border-color: ${tokens.bd2} !important; }`,
-    `.tox .tox-tbtn { color: ${tokens.fg} !important; }`,
+    // 中文：普通 .tox-tbtn（button/span/split-button 各部件）基础态必须显式透明——皮肤不给
+    //       基础态背景，`<button>`/`<span role=presentation>` 会吃 UA 默认白底（暗色主题下
+    //       呈白色 chip，2026-11-19 维护者四张截图的最终根因）。
+    // English: The base state of plain .tox-tbtn (button/span/split-button parts) must be
+    //       explicitly transparent — the skin sets no base background, so <button>/<span>
+    //       elements fall back to the UA default white (white chips on dark themes — the final
+    //       root cause behind the maintainer's four 2026-11-19 screenshots).
+    `.tox .tox-tbtn { background-color: transparent !important; color: ${tokens.fg} !important; }`,
+    // 中文：图标 SVG 的 fill 由皮肤硬编码为深色（不走 currentColor），暗色主题下黑图标不可见——
+    //       强制所有 .tox-icon/.tox-tbtn 内的 svg 跟随所在容器文字色（2026-11-19 维护者反馈）。
+    // English: The skin hardcodes icon SVG fills to a dark colour (not currentColor), leaving black
+    //       icons invisible on dark themes — force every .tox-icon/.tox-tbtn svg to follow the
+    //       container's text colour (2026-11-19 maintainer feedback).
+    `.tox .tox-tbtn svg, .tox .tox-icon svg { fill: currentColor !important; }`,
     `.tox .tox-tbtn:hover, .tox .tox-tbtn:focus { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-tbtn:active, .tox .tox-tbtn--active, .tox .tox-tbtn--active:hover { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    // 中文：--enabled（如加粗持续生效态）与 :focus-visible（点两次箭头后残留的焦点态）同样
+    //       需要主题化，否则皮肤给出浅色底/白底（维护者截图 2）。
+    // English: The --enabled state (e.g. bold toggled on) and :focus-visible (the residual focus
+    //       state after clicking a chevron twice) must be themed too, or the skin paints light or
+    //       white chips (maintainer screenshot 2).
+    `.tox .tox-tbtn--enabled, .tox .tox-tbtn--enabled:hover { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-tbtn:focus-visible, .tox .tox-split-button:focus-visible, .tox .tox-split-button:focus-visible .tox-tbtn { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    // 中文：split-button **根容器**的状态也要主题化——皮肤给根容器焦点/展开态白底，箭头连点两次
+    //       后根元素变白（2026-11-19 维护者截图 2 的直接来源，本轮复现确认 rootBg=rgb(255,255,255)）。
+    // English: The split-button **root container** states must be themed too — the skin paints the
+    //       root white on focus/expanded states, turning the whole chip white after two chevron
+    //       clicks (the direct source of maintainer screenshot 2; reproduced this round with
+    //       rootBg = rgb(255,255,255)).
+    `.tox .tox-split-button { background-color: transparent !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-split-button:hover, .tox .tox-split-button:focus, .tox .tox-split-button:focus-visible, .tox .tox-split-button:focus-within { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-tbtn--disabled, .tox .tox-tbtn--disabled:hover { color: ${tokens.fg3} !important; background-color: transparent !important; }`,
     `.tox .tox-tbtn--select, .tox .tox-tbtn--select:hover { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-toolbar__primary { border-bottom: 1px solid ${tokens.bd2} !important; }`,
@@ -145,29 +185,202 @@ export function editorThemeCss(tokens: ThemeTokens): string {
     `.tox .tox-menu { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd2} !important; }`,
     `.tox .tox-menu .tox-menu-item { color: ${tokens.fg} !important; }`,
     `.tox .tox-collection__item { color: ${tokens.fg} !important; }`,
-    `.tox .tox-collection__item--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    // 中文：菜单条目的全部"高亮态"变体（悬停/激活/enacted 当前值/选中）统一用 sel——避免皮肤
+    //       残留的深色高亮脱离主题（维护者截图 1：段落 ✓ 当前值行颜色不对）。
+    // English: Every highlighted variant of menu items (hover/active/enacted current
+    //       value/selected) uses sel uniformly — so no leftover skin highlight escapes the theme
+    //       (maintainer screenshot 1: the miscoloured "段落 ✓" current-value row).
+    `.tox .tox-collection__item--active, .tox .tox-collection__item--enacted, .tox .tox-collection__item--selected, .tox .tox-collection__item:hover { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-dialog, .tox .tox-dialog__body, .tox .tox-dialog__footer { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    // 中文：对话框标题栏有自己的皮肤白底，须单独覆盖背景（2026-11-19 表格属性对话框截图）。
+    // English: The dialog header carries its own skin white background and needs its own override
+    //       (2026-11-19 table-properties dialog screenshot).
+    `.tox .tox-dialog__header { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-dialog__title { color: ${tokens.fg} !important; }`,
+    // 中文：模态遮罩改为暗色半透明——皮肤默认 rgba(255,255,255,.75) 会把整个暗色壳洗白。
+    // English: The modal backdrop becomes dark translucent — the skin default rgba(255,255,255,.75)
+    //       washes out the whole dark shell.
+    `.tox .tox-dialog-wrap__backdrop { background-color: rgba(0, 0, 0, 0.5) !important; }`,
     `.tox .tox-toolbar__overflow .tox-toolbar { background-color: transparent !important; }`,
     `.tox .tox-pop { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-pop__dialog { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-dropzone { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-insert-table-picker { background-color: ${tokens.bg2} !important; }`,
     `.tox .tox-color-picker-container { background-color: ${tokens.bg2} !important; }`,
-    `.tox .tox-listboxfield .tox-listbox--select { color: ${tokens.fg} !important; }`,
-    `.tox .tox-selectfield select { color: ${tokens.fg} !important; }`,
-    `.tox .tox-textfield, .tox .tox-textarea { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    // 中文：下拉列表框（对话框内的对齐/类列表）也要显式底色，否则吃 UA 白底。
+    // English: Listboxes (alignment/classes inside dialogs) also need an explicit backdrop or they
+    //       fall back to the UA white.
+    `.tox .tox-listbox, .tox .tox-listbox--select { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-selectfield select { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    // 中文：表单控件必须同时覆盖**边框色**——皮肤给 `.tox-textfield, .tox-toolbar-textfield,
+    //       .tox-listboxfield .tox-listbox--select, .tox-textarea, .tox-selectfield select` 统一
+    //       设了 `border-color: #eeeeee`，只改背景会留下刺眼的浅灰描边（2026-11-19 维护者截图：
+    //       插入链接对话框的目标窗口下拉框上下两条 1px 白线，实测 rgb(238,238,238)）。
+    // English: Form controls need their **border colour** overridden too — the skin sets
+    //       `border-color: #eeeeee` across `.tox-textfield, .tox-toolbar-textfield,
+    //       .tox-listboxfield .tox-listbox--select, .tox-textarea, .tox-selectfield select`; changing
+    //       only the background leaves a jarring pale stroke (2026-11-19 screenshot: the two 1px
+    //       lines above/below the target-window listbox in the insert-link dialog, measured
+    //       rgb(238,238,238)).
+    `.tox .tox-textfield, .tox .tox-textarea, .tox .tox-toolbar-textfield,`,
+    `.tox .tox-listbox, .tox .tox-listbox--select, .tox .tox-selectfield select,`,
+    `.tox .tox-textarea-wrap { border-color: ${tokens.bd} !important; }`,
+    `.tox .tox-textfield, .tox .tox-textarea { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd} !important; }`,
     `.tox .tox-search-dialog { background-color: ${tokens.bg2} !important; }`,
     `.tox .tox-menu .tox-collection__item--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-block-wrap { color: ${tokens.fg} !important; }`,
     `.tox .tox-bubble { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-notification { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
     `.tox .tox-dialog__body-content { color: ${tokens.fg} !important; }`,
-    `.tox .tox-dialog__header { color: ${tokens.fg} !important; }`,
-    `.tox .tox-dialog__title { color: ${tokens.fg} !important; }`,
-    `.tox .tox-button { background-color: ${tokens.bg3} !important; color: ${tokens.fg} !important; }`,
-    `.tox .tox-button--secondary { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-button { background-color: ${tokens.bg3} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd} !important; }`,
+    // 中文：次要按钮的边框与底色同源（皮肤 #f0f0f0/#e3e3e3/#d6d6d6/#a8c8ed），必须一起覆盖，
+    //       否则暗色主题下按钮周围出现浅灰描边（2026-11-19 截图实测 rgb(240,240,240)）。
+    // English: Secondary buttons share the same colour for border and fill (skin
+    //       #f0f0f0/#e3e3e3/#d6d6d6/#a8c8ed); both must be overridden together or pale strokes
+    //       appear around buttons on dark themes (measured rgb(240,240,240) in the 2026-11-19
+    //       screenshot).
+    `.tox .tox-button--secondary { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd} !important; }`,
     `.tox .tox-input-group { color: ${tokens.fg} !important; }`,
-    `.tox .tox-label { color: ${tokens.fg2} !important; }`
+    `.tox .tox-label { color: ${tokens.fg2} !important; }`,
+    // ===== 以下为按皮肤 CSS 清单逐条补齐的"状态变体"覆盖（2026-11-19 第三轮）=====
+    // 中文：皮肤为大量元素准备了**独立的浅色状态规则**（:focus / :hover / [disabled] /
+    //       --enabled / 分组标题 / 数字输入框 / bespoke 按钮 / 颜色选择器 / 缩略图列表），
+    //       每条都可能把暗色主题打回浅色。这里按 oxide/skin.css 的实际清单逐条对照覆盖。
+    // English: The skin ships **separate light rules for many states** (:focus / :hover /
+    //       [disabled] / --enabled / group headings / number input / bespoke buttons / colour
+    //       picker / swatch grid); any one of them can restore a light surface on a dark theme.
+    //       Every rule below is checked one-by-one against oxide/skin.css.
+    // 中文：输入框/列表框/下拉框的 :focus 与 [disabled] 态（皮肤给 #fff / #f2f2f2）。
+    // English: :focus and [disabled] states of text fields / listboxes / selects (the skin paints
+    //       #fff / #f2f2f2).
+    `.tox .tox-textfield:focus, .tox .tox-textarea:focus, .tox .tox-textarea-wrap:focus-within,`,
+    `.tox .tox-listboxfield .tox-listbox--select:focus, .tox .tox-selectfield select:focus {`,
+    `  background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; border-color: ${tokens.accent} !important; }`,
+    `.tox .tox-textfield[disabled], .tox .tox-textarea[disabled], .tox .tox-textfield--disabled,`,
+    `.tox .tox-listboxfield .tox-listbox--select[disabled], .tox .tox-selectfield select[disabled] {`,
+    `  background-color: ${tokens.bg3} !important; color: ${tokens.fg3} !important; border-color: ${tokens.bd2} !important; }`,
+    // 中文：菜单分组标题（#fcfcfc）与水平集合容器（#fff）的底色。
+    // English: Menu group headings (#fcfcfc) and the horizontal collection container (#fff).
+    `.tox .tox-collection__group-heading { background-color: ${tokens.bg3} !important; color: ${tokens.fg3} !important; }`,
+    `.tox .tox-collection--horizontal, .tox .tox-collection--list .tox-collection__group { background-color: ${tokens.bg2} !important; border-color: ${tokens.bd2} !important; }`,
+    // 中文：菜单里"当前生效值"条目（皮肤给纯白）与工具栏集合的 active 态。
+    // English: The "currently effective value" item in menus (skin paints pure white) and the
+    //       toolbar collection's active state.
+    `.tox .tox-collection--list .tox-collection__item--enabled { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-collection--toolbar .tox-collection__item--active,`,
+    `.tox .tox-collection--toolbar .tox-collection__item--active:hover,`,
+    `.tox .tox-collection--grid .tox-collection__item--active:not(.tox-collection__item--state-disabled) {`,
+    `  background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-collection--list .tox-collection__item--active:not(.tox-collection__item--state-disabled) { color: ${tokens.fg} !important; }`,
+    // 中文：数字输入框与 bespoke 按钮（皮肤 #f7f7f7）及其内部按钮/输入状态。
+    // English: Number input and bespoke buttons (skin #f7f7f7) plus their inner button/input states.
+    `.tox .tox-number-input, .tox .tox-number-input:focus, .tox .tox-tbtn--bespoke, .tox .tox-tbtn--bespoke:focus { background-color: ${tokens.bg3} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-number-input input, .tox .tox-number-input button { background-color: transparent !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-number-input input:hover, .tox .tox-number-input button:hover { background-color: ${tokens.sel} !important; }`,
+    `.tox .tox-number-input input:disabled, .tox .tox-number-input button:disabled { background-color: transparent !important; color: ${tokens.fg3} !important; }`,
+    // 中文：菜单栏按钮（.tox-mbtn）各态——皮肤给 #fff / #f0f0f0。
+    // English: Menubar buttons (.tox-mbtn) in all states — the skin paints #fff / #f0f0f0.
+    `.tox .tox-mbtn { background-color: transparent !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-mbtn:hover:not(:disabled):not(.tox-mbtn--active), .tox .tox-mbtn:focus:not(:disabled), .tox .tox-mbtn--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-mbtn[disabled] { background-color: transparent !important; color: ${tokens.fg3} !important; }`,
+    // 中文：颜色选择器——色板悬停底、色相滑块拇指（皮肤给白色）、色相条本身是彩虹渐变
+    //       （内容本身，保留），滑动面板边框改主题色。
+    // English: Colour picker — swatch hover backdrop, hue-slider thumb (skin paints white), the hue
+    //       strip itself stays a rainbow (that IS the content), and slider/palette borders are
+    //       themed.
+    `.tox .tox-swatches__picker-btn:hover, .tox .tox-swatches__picker-btn:focus { background-color: ${tokens.sel} !important; }`,
+    `.tox .tox-hue-slider-thumb { background-color: ${tokens.fg} !important; border-color: ${tokens.bg2} !important; }`,
+    `.tox .tox-sv-palette-inner-thumb, .tox .tox-color-input span::before { border-color: ${tokens.fg} !important; }`,
+    `.tox .tox-slider__rail { border-color: ${tokens.bd2} !important; }`,
+    // 中文：表格网格选择器的单元格边框（皮肤 #eeeeee，暗底上刺眼）。
+    // English: Insert-table grid cell borders (skin #eeeeee, glaring on a dark backdrop).
+    `.tox .tox-insert-table-picker > div { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-insert-table-picker .tox-insert-table-picker__selected { border-color: ${tokens.accent} !important; background-color: ${tokens.sel} !important; }`,
+    // 中文：对话框底部/整框边框、pop 箭头描边、状态栏与 well 等容器边框统一主题化。
+    // English: Dialog footer/frame borders, pop arrow outlines, status bar and well borders are
+    //       themed uniformly.
+    `.tox .tox-dialog__footer { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-dialog { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-pop__dialog { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-pop.tox-pop--bottom::after { border-color: ${tokens.bg2} transparent transparent transparent !important; }`,
+    `.tox .tox-pop.tox-pop--bottom::before { border-color: ${tokens.bd2} transparent transparent transparent !important; }`,
+    `.tox .tox-pop.tox-pop--top::after { border-color: transparent transparent ${tokens.bg2} transparent !important; }`,
+    `.tox .tox-pop.tox-pop--top::before { border-color: transparent transparent ${tokens.bd2} transparent !important; }`,
+    `.tox .tox-pop.tox-pop--left::after { border-color: transparent ${tokens.bg2} transparent transparent !important; }`,
+    `.tox .tox-pop.tox-pop--left::before { border-color: transparent ${tokens.bd2} transparent transparent !important; }`,
+    `.tox .tox-pop.tox-pop--right::after { border-color: transparent transparent transparent ${tokens.bg2} !important; }`,
+    `.tox .tox-pop.tox-pop--right::before { border-color: transparent transparent transparent ${tokens.bd2} !important; }`,
+    `.tox .tox-statusbar { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-well, .tox .tox-view__pane_panel, .tox .tox-custom-editor { border-color: ${tokens.bd2} !important; background-color: ${tokens.bg2} !important; }`,
+    // 中文：对话框内按钮的 :focus / :hover / :active / [disabled] 态（皮肤给 #f0f0f0/#e3e3e3/
+    //       #d6d6d6），以及次要按钮的禁用态。
+    // English: Dialog button :focus / :hover / :active / [disabled] states (skin #f0f0f0/#e3e3e3/
+    //       #d6d6d6) plus the secondary button's disabled state.
+    `.tox .tox-button:hover:not(:disabled), .tox .tox-button:focus:not(:disabled) { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-button:active:not(:disabled) { background-color: ${tokens.bg2} !important; }`,
+    `.tox .tox-button[disabled], .tox .tox-button--secondary[disabled], .tox .tox-button--secondary:hover:not(:disabled), .tox .tox-button--secondary:focus:not(:disabled), .tox .tox-button--secondary:active:not(:disabled) { background-color: ${tokens.bg3} !important; color: ${tokens.fg3} !important; }`,
+    // 中文：通知条（成功/警告/错误/信息）的皮肤浅色底改为主题软层，前景保持主题文字色。
+    // English: Notification banners (success/warn/error/info) switch from the skin's pale tints to
+    //       the theme's soft layer, keeping themed text.
+    `.tox .tox-notification--success, .tox .tox-notification--error, .tox .tox-notification--warn,`,
+    `.tox .tox-notification--warning, .tox .tox-notification--info { background-color: ${tokens.bg3} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd} !important; }`,
+    // 中文：编辑器外框（.tox-hugerte 的 2px 浅灰边）、工具栏内联文本框、split-button 禁用态、
+    //       数字输入框内部包装——均为自动核查查出的真实遗漏项。
+    // English: The editor frame (.tox-hugerte's 2px pale border), the toolbar inline text field, the
+    //       split-button disabled state, and the number input's inner wrapper — all real omissions
+    //       the automated check surfaced.
+    `.tox.tox-hugerte, .tox-hugerte { border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-toolbar-textfield { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; border-color: ${tokens.bd} !important; }`,
+    `.tox .tox-split-button.tox-tbtn--disabled:hover, .tox .tox-split-button.tox-tbtn--disabled:focus,`,
+    `.tox .tox-split-button.tox-tbtn--disabled:focus-visible { background-color: transparent !important; }`,
+    `.tox .tox-number-input:focus:not(:active) > .tox-input-wrapper, .tox .tox-number-input:focus:not(:active) > button { background-color: ${tokens.bg3} !important; }`,
+    // 中文：次要按钮的 --enabled 态（皮肤给蓝色，改主题强调色淡底）与菜单栏激活+焦点组合态。
+    // English: Secondary button --enabled (skin paints blue; use a tinted accent) and the menubar's
+    //       active+focus combination.
+    `.tox .tox-button--secondary.tox-button--enabled, .tox .tox-button--secondary.tox-button--enabled[disabled] { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-mbtn:not(:disabled).tox-mbtn--active:focus { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-collection--toolbar .tox-collection__item--enabled.tox-collection__item--active { background-color: ${tokens.sel} !important; color: ${tokens.fg} !important; }`,
+    // 中文：编辑器自带菜单栏（.tox-menubar，工具栏之上）的底色——皮肤给纯白，此前遗漏。
+    // English: The editor's own menubar (.tox-menubar, above the toolbar) — the skin paints it pure
+    //       white; previously missed.
+    `.tox .tox-menubar { background-color: ${tokens.bg2} !important; color: ${tokens.fg} !important; }`,
+    // 中文：无障碍检查器内嵌提示条（编辑无障碍内容时出现的警告/错误块）——皮肤给黄/红色底，
+    //       改主题软层并保留文字可读性。
+    // English: The accessibility-checker inline banners (warn/error blocks that appear when editing
+    //       accessible content) — the skin paints yellow/red; switch to the theme's soft layer while
+    //       keeping text readable.
+    `.tox .tox-dialog__body-content .accessibility-issue--warn a.tox-button--naked.tox-button--icon,`,
+    `.tox .tox-dialog__body-content .accessibility-issue--warn a.tox-button--naked.tox-button--icon:hover,`,
+    `.tox .tox-dialog__body-content .accessibility-issue--warn a.tox-button--naked.tox-button--icon:active,`,
+    `.tox .tox-dialog__body-content .accessibility-issue--error a.tox-button--naked.tox-button--icon { background-color: ${tokens.bg3} !important; color: ${tokens.fg} !important; }`,
+    `.tox .tox-navobj-bordered::before, .tox.tox-inline-edit-area { border-color: ${tokens.bd2} !important; }`,
+    // 中文：对话框内的**分页标签栏**（表格属性对话框的「一般 / 高级」）——皮肤把选中项写死为
+    //       蓝色 #006ce7、未选中项写死为半透明深灰 #222f3e，在暗色底上几乎不可见（2026-11-19
+    //       维护者红框：实测未选中项与背景对比度 = 0）。
+    // English: The **tab strip inside dialogs** (the General/Advanced tabs of the table-properties
+    //       dialog) — the skin hardcodes the selected tab as blue #006ce7 and unselected tabs as
+    //       translucent dark #222f3e, which is nearly invisible on a dark surface (2026-11-19 red
+    //       box: the unselected tab measured contrast 0 against its background).
+    `.tox .tox-dialog__body-nav { background-color: ${tokens.bg2} !important; border-color: ${tokens.bd2} !important; }`,
+    `.tox .tox-dialog__body-nav-item { color: ${tokens.fg2} !important; border-color: transparent !important; }`,
+    `.tox .tox-dialog__body-nav-item:hover { color: ${tokens.fg} !important; }`,
+    `.tox .tox-dialog__body-nav-item--active { color: ${tokens.accent} !important; border-color: ${tokens.accent} !important; }`,
+    // 中文：对话框正文里的链接与表单分组标题（皮肤写死深色 #222f3e / 蓝色系）。
+    // English: Links and form-group headings inside dialog bodies (the skin hardcodes dark #222f3e
+    //       and blues).
+    `.tox .tox-dialog__body-content a { color: ${tokens.accent} !important; }`,
+    `.tox .tox-dialog__body-content a:hover, .tox .tox-dialog__body-content a:focus { color: ${tokens.accent} !important; }`,
+    `.tox .tox-dialog__body-content .tox-form__group h1, .tox .tox-dialog__body-content .tox-form__group h2 { color: ${tokens.fg} !important; }`,
+    // 中文：`--naked` 按钮（无底色图标/文字按钮）的文字色与悬停底——皮肤同样写死深色。
+    // English: `--naked` buttons (chrome-less icon/text buttons) — the skin likewise hardcodes dark
+    //       text and a dark hover backdrop.
+    `.tox .tox-button--naked, .tox .tox-button--naked:hover:not(:disabled),`,
+    `.tox .tox-button--naked:focus:not(:disabled), .tox .tox-button--naked:active:not(:disabled) { color: ${tokens.fg} !important; }`,
+    `.tox .tox-button--naked:hover:not(:disabled), .tox .tox-button--naked:focus:not(:disabled) { background-color: ${tokens.sel} !important; }`,
+    // 中文：对话框正文的默认文字色（皮肤在 `.tox-dialog__body` 写死 #222f3e）。
+    // English: The dialog body's default text colour (the skin hardcodes #222f3e on
+    //       `.tox-dialog__body`).
+    `.tox .tox-dialog__body, .tox .tox-dialog__body-content, .tox .tox-form, .tox .tox-form__group { color: ${tokens.fg} !important; }`
   ].join("\n");
 }
 

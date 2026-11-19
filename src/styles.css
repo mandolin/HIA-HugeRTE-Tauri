@@ -57,6 +57,13 @@ html { font-size: calc(16px * var(--app-ui-font-scale, 1)); }
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; min-width: 720px; height: 100%; margin: 0; }
 button, select { font: inherit; }
+/* 中文：原生下拉的文字与弹出选项跟随主题——此前只设了背景，暗色主题下弹层黑字不可读、
+   选中项白色脱离主题（2026-11-19 维护者反馈；color-scheme 由 applyThemeToDom 按主题切换）。
+   English: Native dropdown text and popup options follow the theme — previously only the backdrop
+   was themed, leaving unreadable black text on dark popups and an off-theme white selected row
+   (2026-11-19 maintainer feedback; color-scheme is switched per theme by applyThemeToDom). */
+select { color: var(--c-text); }
+select option, select optgroup { background-color: var(--c-surface); color: var(--c-text); }
 /* 中文：外壳栅格（`W-hrt-P12` 方案二定案 + `W-hrt-P14` F4 状态栏行）——按顶层子元素的实际顺序
    排列（Banner / 菜单栏 / 工具栏 / Tab 条 / 编辑容器 / 状态栏 / 确认遮罩）：前四行与状态栏行按
    内容高度，编辑容器吃掉剩余高度（`minmax(0,1fr)`），确认遮罩行高 0（fixed 浮层，不占空间）。
@@ -73,15 +80,25 @@ button, select { font: inherit; }
    line by line against the same lesson). The menubar's hidden mode keeps its row as a zero-height
    placeholder (see .menubar[data-mode=hidden]). */
 .application-shell { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr) auto 0; height: 100%; }
-.app-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; color: var(--c-surface); background: var(--c-accent); }
+/* 中文：Banner 使用专用 banner token（W-hrt-P16 修复：此前误用 --c-accent，导致换主题时
+   Banner 跟随强调色而非各主题专属的横幅色——默认主题两者恰好同为深蓝故一直未暴露）。
+   English: The banner uses its dedicated banner tokens (W-hrt-P16 fix: it previously used
+   --c-accent, so the banner followed each theme's accent instead of its dedicated banner colour —
+   the default theme's accent happens to equal the banner colour, which hid the bug until themed
+   palettes diverged). */
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; color: var(--c-banner-fg); background: var(--c-banner-bg); }
 /* 中文：Banner 中央预留位（未来综合搜索/命令输入框等模块），当前为空且不参与交互。
    English: Banner centre reservation (future combined search / command box modules) — currently
    empty and non-interactive. */
 .app-banner__reserved { flex: 1 1 auto; min-width: 2rem; }
 /* 中文：Banner 右上设置齿轮（唯一保留的 Banner 按钮）。
    English: The Banner's settings gear (the only button left in the Banner). */
-.app-header__gear { display: inline-grid; place-items: center; flex: none; width: 2rem; height: 2rem; padding: 0; border: none; border-radius: .35rem; background: transparent; color: var(--c-surface); cursor: pointer; }
-.app-header__gear:hover, .app-header__gear:focus-visible { background: rgb(225 253 249 / 25%); }
+.app-header__gear { display: inline-grid; place-items: center; flex: none; width: 2rem; height: 2rem; padding: 0; border: none; border-radius: .35rem; background: transparent; color: var(--c-banner-fg); cursor: pointer; }
+/* 中文：齿轮悬停底色由 banner 前景色按 25% 透明度混合（随主题 banner 联动，不再硬编码默认
+   主题的浅青色）。
+   English: The gear's hover backdrop mixes the banner foreground at 25% (follows each theme's
+   banner colours instead of the default theme's hardcoded pale teal). */
+.app-header__gear:hover, .app-header__gear:focus-visible { background: color-mix(in srgb, var(--c-banner-fg) 25%, transparent); }
 .app-header__gear[hidden] { display: none; }
 /* 中文：应用级菜单栏——经典 Windows 形态：一行文字菜单，点击展开下拉。
    English: Application menu bar — classic Windows form: one row of text menus, click to open a dropdown. */

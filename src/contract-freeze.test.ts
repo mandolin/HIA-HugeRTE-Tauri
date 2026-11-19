@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import mainSource from "./main.ts?raw";
 import stringsSource from "./ui/strings.ts?raw";
+import themesSource from "./ui/themes.ts?raw";
 import documentSource from "./document.ts?raw";
 import rustSource from "../src-tauri/src/lib.rs?raw";
 
@@ -36,11 +37,15 @@ describe("契约冻结：界面状态键（docs/contract-freeze.md §5）", () =
     "hia-hugerte.history-disabled",
     "hia-hugerte.session-restore",
     "hia-hugerte.autosave",
-    "hia-hugerte.language"
+    "hia-hugerte.language",
+    "hia-hugerte.theme",
+    "hia-hugerte.font-stack"
   ];
 
   it.each(frozenKeys)("冻结键仍被使用：%s", (key) => {
-    expect(mainSource.includes(key) || stringsSource.includes(key)).toBe(true);
+    expect(
+      mainSource.includes(key) || stringsSource.includes(key) || themesSource.includes(key)
+    ).toBe(true);
   });
 });
 

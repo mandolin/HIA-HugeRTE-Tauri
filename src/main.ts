@@ -2808,6 +2808,12 @@ function applyThemeToDom(theme: ThemeDef): void {
   //       alone failed in practice — 2026-11-19 maintainer feedback "shell didn't change").
   const root = document.documentElement;
   root.dataset.theme = theme.id;
+  // 中文：color-scheme 跟随主题明暗——原生控件（select 弹层、滚动条、复选框）按 UA 暗色/亮色
+  //       方案渲染，避免暗色主题下原生弹层出现黑字白选中项（2026-11-19 维护者反馈）。
+  // English: color-scheme follows the theme's lightness — native controls (select popups,
+  //       scrollbars, checkboxes) render with the UA dark/light scheme, avoiding black-on-dark
+  //       text and white selected rows in native popups under dark themes (2026-11-19 feedback).
+  root.style.setProperty("color-scheme", theme.dark ? "dark" : "light");
   const tokens = theme.tokens;
   root.style.setProperty("--t-bg", tokens.bg);
   root.style.setProperty("--t-bg2", tokens.bg2);
