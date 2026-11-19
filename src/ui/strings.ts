@@ -217,6 +217,10 @@ const EN: Record<string, string> = {
   " 自动保存草稿（崩溃后恢复未保存内容）": " Autosave drafts (recover unsaved content after a crash)",
   "会话与草稿仅保存在本机（便携目录 data/ 优先；不可写时 %APPDATA%\\HIA-HugeRTE），不上传、不联网。": "Sessions and drafts stay on this machine (portable data/ folder first; %APPDATA%\\HIA-HugeRTE when not writable) — never uploaded, never online.",
   "版本": "Version",
+  // 中文：工具栏右端的静态初始状态文案（骨架模板里写死，切语言时由 applyShellLanguage 覆盖）。
+  // English: The toolbar's static initial status copy (hardcoded in the shell template; refreshed by
+  //        applyShellLanguage on language switch).
+  "准备就绪": "Ready",
   "本程序不联网检查更新、不会自动下载或替换自身；有新版本时请前往下载页手动替换。": "This program never checks for updates online, downloads or replaces itself; for new versions, visit the download page manually.",
   "当前版本 —": "Current version —",
   "读取中…": "Reading…",

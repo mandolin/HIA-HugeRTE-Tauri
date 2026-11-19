@@ -2914,7 +2914,18 @@ function applyShellLanguage(): void {
   // 中文：状态栏初始文案（动态值随运行事件覆盖）。
   const save = document.getElementById("status-save");
   if (save) save.textContent = t("已保存");
-  const count = document.getElementById("status-count");
+  // 中文：工具栏右端的静态初始状态（骨架模板写死"准备就绪"，此前漏翻——2026-11-19 维护者反馈）。
+  //       注意只在初始状态时覆盖：若已有运行期消息（如"已修改，尚未保存"）则保持不动。
+  // English: The toolbar's static initial status (the shell template hardcodes "准备就绪"; previously
+  //       untranslated — 2026-11-19 maintainer feedback). Only overwritten while still in the initial
+  //       state: a runtime message (e.g. "modified, unsaved") is left untouched.
+  const documentStatusElement = document.getElementById("document-status");
+  if (documentStatusElement) {
+    const current = documentStatusElement.textContent?.trim() ?? "";
+    if (current === "" || current === "准备就绪" || current === "Ready") {
+      documentStatusElement.textContent = t("准备就绪");
+    }
+  }  const count = document.getElementById("status-count");
   if (count) count.textContent = t("字符 0 · 词 0");
   const cursor = document.getElementById("status-cursor");
   if (cursor) cursor.textContent = t("行 1 · 列 1");
