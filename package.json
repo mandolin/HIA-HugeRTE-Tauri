@@ -15,7 +15,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --no-bundle",
-    "portable:zip": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1"
+    "portable:zip": "pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
+    "promo:shots": "node scripts/promo-shots.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
@@ -23,6 +24,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
+    "gifenc": "1.0.3",
+    "pngjs": "7.0.0",
     "typescript": "7.0.2",
     "vite": "8.1.5",
     "vitest": "4.1.10"
