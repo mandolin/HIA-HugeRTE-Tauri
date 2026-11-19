@@ -1916,7 +1916,7 @@ async function toggleSettingsPanel(): Promise<void> {
   themeLabel.textContent = t("主题 ");
   const themeSelect = document.createElement("select");
   themeSelect.id = "ui-theme";
-  for (const option of [["system", t("跟随系统")], ...THEMES.map((theme) => [theme.id, theme.label] as const)] as const) {
+  for (const option of [["system", t("跟随系统")], ...THEMES.map((theme) => [theme.id, getThemeLabel(theme)] as const)] as const) {
     const optionElement = document.createElement("option");
     optionElement.value = option[0];
     optionElement.textContent = option[1];
@@ -2020,7 +2020,7 @@ async function toggleSettingsPanel(): Promise<void> {
   const versionAction = document.createElement("button");
   versionAction.type = "button";
   versionAction.className = "settings-panel__action";
-  versionAction.textContent = "打开下载页";
+  versionAction.textContent = t("打开下载页");
   versionAction.addEventListener("click", async () => {
     versionAction.disabled = true;
     try {
@@ -2857,6 +2857,22 @@ function applyThemeToDom(theme: ThemeDef): void {
   if (!override.isConnected) document.head.appendChild(override);
 }
 
+
+/**
+ * @lang zh-CN
+ * 按当前界面语言取主题的显示名（W-hrt-P15 × W-hrt-P16 交叉修正）：`ThemeDef` 同时携带
+ * `label`（中文）与 `labelEn`（英文），主题下拉必须随语言切换取对应一侧——此前直接用
+ * `theme.label`，导致英文界面下仍显示「Solarized 浅色」等中文名（2026-11-19 维护者反馈）。
+ * @lang en
+ * Pick a theme's display name by the current interface language (cross-fix between W-hrt-P15 and
+ * W-hrt-P16): `ThemeDef` carries both `label` (Chinese) and `labelEn` (English), so the theme
+ * dropdown must select the matching side when the language changes — it previously used
+ * `theme.label` unconditionally, leaving Chinese names such as "Solarized 浅色" in the English
+ * interface (2026-11-19 maintainer feedback).
+ */
+function getThemeLabel(theme: ThemeDef): string {
+  return getLanguage() === "en" ? theme.labelEn : theme.label;
+}
 
 /** @lang zh-CN 当前生效主题（解析 `system` 档位后的具体主题）。 / @lang en The currently effective theme (after resolving the `system` setting). */
 function currentTheme(): ThemeDef {

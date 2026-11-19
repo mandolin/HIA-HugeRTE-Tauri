@@ -204,7 +204,13 @@ const EN: Record<string, string> = {
   "精简": "Compact",
   "隐藏": "Hidden",
   "语言 ": "Language ",
-  "中文": "中文",
+  // 中文：语言名通常按自身语言书写，但英文界面下应给非中文用户一个可读名称——译为 "Chinese"。
+  //       2026-11-19 修复：原值为自身映射，英文界面下语言下拉仍显示"中文"（与主题下拉同类缺陷）。
+  // English: Language names are conventionally written in their own language, but an English
+  //       interface should still offer a readable name to non-Chinese users — "Chinese" here.
+  //       2026-11-19 fix: the value was a self-map, so the language dropdown kept showing "中文" in
+  //       the English interface (same class of defect as the theme dropdown).
+  "中文": "Chinese",
   "English": "English",
   "数据与恢复": "Data & recovery",
   " 会话恢复（重启后恢复上次的标签页）": " Session restore (reopen last tabs after a restart)",
